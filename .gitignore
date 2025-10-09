@@ -23,6 +23,15 @@ wheels/
 .installed.cfg
 *.egg
 
+# C# / .NET
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+*.sln.cache
+
 # Environment
 .env
 .env.local
