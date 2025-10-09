@@ -22,6 +22,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+pip-log.txt
+pip-delete-this-directory.txt
 
 # C# / .NET
 bin/
@@ -31,6 +33,14 @@ obj/
 *.userprefs
 .vs/
 *.sln.cache
+*.csproj.user
+*.dbmdl
+*.jfm
+*.pfx
+*.publishsettings
+project.lock.json
+project.fragment.lock.json
+artifacts/
 
 # Environment
 .env
@@ -39,10 +49,13 @@ obj/
 
 # Docker
 *.log
+docker-compose.override.yml
+docker-compose-*.yml
 
 # OS
 .DS_Store
 Thumbs.db
+*.DS_Store
 
 # Editor
 .vscode/
@@ -50,10 +63,19 @@ Thumbs.db
 *.swp
 *.swo
 *~
+*.code-workspace
 
 # Test artifacts
 test-results/
 *.test
+coverage/
+*.coverage
+*.coveragexml
 
 # NATS data
 nats-data/
+jetstream/
+
+# Temporary files
+*.tmp
+/tmp/
