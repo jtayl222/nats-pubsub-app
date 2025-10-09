@@ -98,6 +98,98 @@ services:
       - "com.docker.compose.project=nats-pubsub-csharp"
       - "com.docker.compose.service=subscriber"
 
+  payment-publisher:
+    build:
+      context: ./PaymentPublisher
+      dockerfile: Dockerfile
+    container_name: payment-publisher
+    environment:
+      - NATS_URL=nats://nats:4222
+      - HOSTNAME=${HOSTNAME:-payment-publisher}
+      - PUBLISH_INTERVAL=5.0
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - nats-network
+    restart: unless-stopped
+    # Disable logging to simulate remote server without console access
+    logging:
+      driver: "none"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    labels:
+      - "logging=disabled"
+      - "component=payment-publisher"
+      - "language=csharp"
+      - "service_type=payments"
+      - "com.docker.compose.project=nats-pubsub-csharp"
+      - "com.docker.compose.service=payment-publisher"
+
+  payment-monitor:
+    build:
+      context: ./MessageLogger
+      dockerfile: Dockerfile
+    container_name: payment-monitor
+    environment:
+      - NATS_URL=nats://nats:4222
+      - NATS_SUBJECT=payments.>
+      - HOSTNAME=${HOSTNAME:-payment-monitor}
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - nats-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    labels:
+      - "logging=enabled"
+      - "component=payment-monitor"
+      - "language=csharp"
+      - "service_type=monitoring"
+      - "com.docker.compose.project=nats-pubsub-csharp"
+      - "com.docker.compose.service=payment-monitor"
+
+  # JetStream stream setup (optional - for message persistence)
+  # Uncomment to enable historical message storage
+  # jetstream-setup:
+  #   image: natsio/nats-box:latest
+  #   container_name: jetstream-setup
+  #   depends_on:
+  #     nats:
+  #       condition: service_healthy
+  #   networks:
+  #     - nats-network
+  #   command: |
+  #     sh -c "
+  #       echo 'Setting up JetStream streams...' &&
+  #       sleep 5 &&
+  #       nats --server nats://nats:4222 stream add PAYMENTS \
+  #         --subjects 'payments.>' \
+  #         --storage file \
+  #         --retention limits \
+  #         --max-age 168h \
+  #         --max-bytes 1G \
+  #         --replicas 1 \
+  #         --discard old \
+  #         --defaults || echo 'Stream already exists' &&
+  #       echo 'JetStream setup complete'
+  #     "
+  #   restart: "no"  # Run once on startup
+
 networks:
   nats-network:
     driver: bridge
