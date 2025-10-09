@@ -1,550 +1,639 @@
-# NATS PubSub - C# Implementation
+# NATS PubSub - C# Implementations
 
-.NET 8 implementation of NATS publisher/subscriber with structured JSON logging.
+Multiple .NET 8 implementations of NATS publisher/subscriber with structured JSON logging.
 
-## Overview
+## Components Overview
 
-This C# implementation provides:
-- **Publisher**: Async message generation using `NATS.Client`
-- **Subscriber**: Async message consumption with latency tracking
-- **Structured Logging**: JSON format compatible with Loki/Promtail
-- **Docker Support**: Multi-stage builds with Alpine runtime
-- **Cross-Language**: Compatible with Python, Go, and other implementations
+This directory contains **6 different C# components** serving different purposes:
 
-## Features
+### 1. Basic Pub/Sub (Publisher/ + Subscriber/)
+- **Library:** NATS.Client 1.1.8 (legacy)
+- **Purpose:** Simple message demonstration
+- **Features:** Basic pub/sub, cross-language compatible with Python
+- **Deploy:** `docker-compose up -d publisher subscriber nats`
+- **Use Case:** Learning NATS basics, cross-language testing
 
-- ✅ .NET 8 with `NATS.Client` 2.0.0
-- ✅ Structured JSON logging
-- ✅ Message latency tracking
-- ✅ Automatic reconnection
-- ✅ Metrics logging
-- ✅ Docker Compose orchestration
-- ✅ Alpine-based images (~100 MB runtime)
-- ✅ Health checks
-- ✅ Non-root containers
+### 2. Payment Monitoring (PaymentPublisher/ + MessageLogger/)
+- **Library:** NATS.Client 1.1.8 (legacy)
+- **Purpose:** Monitor payment systems via NATS without console access
+- **Features:** Error simulation, remote system monitoring
+- **Deploy:** `docker-compose up -d payment-publisher payment-monitor nats`
+- **Use Case:** Monitor remote servers, capture payment errors
+- **Docs:** [`../docs/payment-monitoring-setup.md`](../docs/payment-monitoring-setup.md)
 
-## Quick Start
+### 3. JetStream Persistence (PaymentPublisher-JetStream/ + MessageLogger-JetStream/)
+- **Library:** NATS.Net 2.4.0 (modern)
+- **Purpose:** Message persistence and historical replay
+- **Features:** Durable consumers, replay, at-least-once delivery
+- **Deploy:** Requires stream setup (see docs)
+- **Use Case:** Production persistence, catch up after downtime
+- **Docs:** [`../docs/upgrade-to-nats-net-2.md`](../docs/upgrade-to-nats-net-2.md)
 
-### 1. Deploy
-
-```bash
-cd csharp
-
-# Copy environment template
-cp .env.example .env
-
-# Edit if needed
-nano .env
-
-# Build and start
-docker-compose up -d --build
-
-# Check status
-docker-compose ps
-```
-
-### 2. View Logs
-
-```bash
-# All services
-docker-compose logs -f
-
-# Publisher only
-docker-compose logs -f publisher
-
-# Subscriber only
-docker-compose logs -f subscriber
-```
-
-### 3. Monitor NATS
-
-```bash
-# Server info
-curl http://localhost:8222/varz | jq
-
-# Connections
-curl http://localhost:8222/connz | jq
-```
-
-## Project Structure
+## Repository Structure
 
 ```
 csharp/
-├── README.md                 # This file
-├── docker-compose.yml        # Orchestration
-├── .env.example             # Environment template
-├── Publisher/
-│   ├── Dockerfile           # Multi-stage build
-│   ├── Publisher.csproj     # Project file
-│   └── Program.cs           # Publisher code
-└── Subscriber/
-    ├── Dockerfile           # Multi-stage build
-    ├── Subscriber.csproj    # Project file
-    └── Program.cs           # Subscriber code
+├── README.md                       # This file
+├── docker-compose.yml              # Orchestrates ALL C# services
+├── .env.example
+├── Publisher/                      # Basic publisher (NATS.Client 1.x)
+│   ├── Dockerfile
+│   ├── Publisher.csproj
+│   └── Program.cs
+├── Subscriber/                     # Basic subscriber (NATS.Client 1.x)
+│   ├── Dockerfile
+│   ├── Subscriber.csproj
+│   └── Program.cs
+├── PaymentPublisher/               # Payment simulator (NATS.Client 1.x)
+│   ├── README.md
+│   ├── Dockerfile
+│   ├── PaymentPublisher.csproj
+│   └── Program.cs
+├── MessageLogger/                  # Message monitor (NATS.Client 1.x)
+│   ├── Dockerfile
+│   ├── MessageLogger.csproj
+│   └── Program.cs
+├── PaymentPublisher-JetStream/     # Payment with persistence (NATS.Net 2.x)
+│   ├── Dockerfile
+│   ├── PaymentPublisher.csproj
+│   └── Program.cs
+└── MessageLogger-JetStream/        # Monitor with replay (NATS.Net 2.x)
+    ├── Dockerfile
+    ├── MessageLogger.csproj
+    └── Program.cs
 ```
 
-## Configuration
+## Quick Start
 
-### Environment Variables
-
-Edit `.env`:
+### Option 1: Basic Pub/Sub
 
 ```bash
-# Unique identifier
-HOSTNAME=nats-csharp
+# Build and start basic publisher/subscriber
+docker-compose up -d --build publisher subscriber nats
 
-# NATS connection
-NATS_URL=nats://nats:4222
-NATS_SUBJECT=events.test
-
-# Publisher: seconds between messages
-PUBLISH_INTERVAL=2.0
-
-# Subscriber: queue group for load balancing
-QUEUE_GROUP=workers
+# View logs
+docker-compose logs -f publisher subscriber
 ```
 
-### Publisher Configuration
+### Option 2: Payment Monitoring
 
-In `docker-compose.yml`:
+```bash
+# Build and start payment simulation + monitoring
+docker-compose up -d --build payment-publisher payment-monitor nats
 
+# View payment monitor logs (shows errors)
+docker-compose logs -f payment-monitor
+
+# Payment publisher has logging disabled (simulates remote server)
+docker logs payment-publisher  # (empty - simulates no console access)
+```
+
+### Option 3: JetStream with Historical Replay
+
+```bash
+# Uncomment jetstream-setup service in docker-compose.yml first
+
+# Build and start JetStream versions
+docker-compose up -d --build payment-publisher-js payment-monitor-js nats
+
+# View logs with historical replay
+docker-compose logs -f payment-monitor-js
+```
+
+## Component Details
+
+### Publisher (Basic)
+
+**What it does:**
+- Publishes messages to `events.test` every 2 seconds
+- Generates random event types (user.login, order.created, etc.)
+- Logs structured JSON to stdout
+
+**Configuration:**
 ```yaml
 environment:
   - NATS_URL=nats://nats:4222
   - NATS_SUBJECT=events.test
   - HOSTNAME=csharp-publisher
-  - PUBLISH_INTERVAL=2.0
+  - PUBLISH_INTERVAL=2.0  # seconds
 ```
 
-### Subscriber Configuration
+**Example log:**
+```json
+{
+  "timestamp": "2025-10-09T01:15:30.123Z",
+  "level": "INFO",
+  "logger": "nats-publisher",
+  "message": "Message published",
+  "message_id": "csharp-publisher-42",
+  "subject": "events.test",
+  "sequence": 42
+}
+```
 
+### Subscriber (Basic)
+
+**What it does:**
+- Subscribes to `events.test` messages
+- Tracks message latency
+- Logs metrics every 60 seconds
+
+**Configuration:**
 ```yaml
 environment:
   - NATS_URL=nats://nats:4222
   - NATS_SUBJECT=events.test
   - HOSTNAME=csharp-subscriber
-  - QUEUE_GROUP=workers
+  - QUEUE_GROUP=workers  # Optional: for load balancing
 ```
 
-## Message Format
-
-### Published Message
-
+**Example log:**
 ```json
 {
+  "timestamp": "2025-10-09T01:15:30.456Z",
+  "level": "INFO",
+  "logger": "nats-subscriber",
+  "message": "Message received",
   "message_id": "csharp-publisher-42",
-  "timestamp": "2025-10-08T12:34:56.789Z",
-  "source": "csharp-publisher",
-  "sequence": 42,
+  "latency_ms": 2.34
+}
+```
+
+### PaymentPublisher
+
+**What it does:**
+- Simulates credit card payment processing
+- Publishes to `payments.credit_card.accepted` (most transactions)
+- Publishes to `payments.credit_card.declined` (~1 per minute)
+- Logs declined transactions at **ERROR** level
+- **Logging disabled** to simulate remote server without console access
+
+**Configuration:**
+```yaml
+environment:
+  - NATS_URL=nats://nats:4222
+  - HOSTNAME=payment-publisher
+  - PUBLISH_INTERVAL=5.0  # seconds between transactions
+
+logging:
+  driver: "none"  # Simulates no console access
+```
+
+**Publishes payment messages:**
+```json
+{
+  "transaction_id": "TXN-payment-publisher-42",
+  "timestamp": "2025-10-09T01:15:30.789Z",
+  "source": "payment-publisher",
+  "card_type": "Visa",
+  "last_four": "4532",
+  "amount": 99.99,
+  "currency": "USD",
+  "status": "declined",
+  "decline_reason": "insufficient_funds",
+  "decline_code": "ERR-451"
+}
+```
+
+**Use case:** Monitor payment failures without accessing remote server logs.
+
+See: [`PaymentPublisher/README.md`](PaymentPublisher/README.md)
+
+### MessageLogger
+
+**What it does:**
+- Subscribes to NATS topics (wildcards supported)
+- Logs full message payloads to stdout
+- Logs declined/failed messages at **ERROR** level
+- Generic monitoring tool for any NATS messages
+
+**Configuration:**
+```yaml
+environment:
+  - NATS_URL=nats://nats:4222
+  - NATS_SUBJECT=payments.>  # Wildcard: all payments.*
+  - HOSTNAME=payment-monitor
+```
+
+**Example log (captures PaymentPublisher messages):**
+```json
+{
+  "timestamp": "2025-10-09T01:15:30.789Z",
+  "level": "ERROR",
+  "logger": "nats-message-logger",
+  "message": "Payment transaction declined",
   "data": {
-    "event_type": "user.login",
-    "value": 523,
-    "random_field": "alpha"
+    "subject": "payments.credit_card.declined",
+    "transaction_id": "TXN-payment-publisher-42",
+    "decline_reason": "insufficient_funds",
+    "amount": 99.99,
+    "payload": { ...full NATS message... }
   }
 }
 ```
 
-Follows the schema in `../docs/message-format.md`.
+**Use case:** Monitor remote systems via NATS when you can't access application logs.
 
-## Log Format
+### PaymentPublisher-JetStream
 
-### Publisher Log
+**What it does:**
+- Same as PaymentPublisher but uses NATS.Net 2.x with JetStream
+- **Messages persisted to disk**
+- Returns sequence numbers and acknowledgments
+- Auto-creates PAYMENTS stream
 
-```json
-{
-  "timestamp": "2025-10-08T12:34:56.789Z",
-  "level": "INFO",
-  "logger": "nats-publisher",
-  "message": "Message published",
-  "module": "Program",
-  "function": "PublishLoop",
-  "message_id": "csharp-publisher-42",
-  "subject": "events.test",
-  "size_bytes": 245,
-  "sequence": 42,
-  "event_type": "user.login"
-}
+**Configuration:**
+```yaml
+environment:
+  - NATS_URL=nats://nats:4222
+  - HOSTNAME=payment-publisher-js
+  - PUBLISH_INTERVAL=5.0
 ```
 
-### Subscriber Log
+**Key difference:** Messages stored in JetStream stream, survives restarts.
 
-```json
-{
-  "timestamp": "2025-10-08T12:34:56.790Z",
-  "level": "INFO",
-  "logger": "nats-subscriber",
-  "message": "Message received",
-  "module": "Program",
-  "function": "HandleMessage",
-  "message_id": "csharp-publisher-42",
-  "subject": "events.test",
-  "size_bytes": 245,
-  "source": "csharp-publisher",
-  "sequence": 42,
-  "latency_ms": 1.23,
-  "event_type": "user.login"
-}
+See: [`../docs/upgrade-to-nats-net-2.md`](../docs/upgrade-to-nats-net-2.md)
+
+### MessageLogger-JetStream
+
+**What it does:**
+- Same as MessageLogger but uses NATS.Net 2.x with JetStream consumers
+- **Replays historical messages** from JetStream streams
+- Durable consumer survives restarts
+- Resumes from last acknowledged message
+
+**Configuration:**
+```yaml
+environment:
+  - NATS_URL=nats://nats:4222
+  - STREAM_NAME=PAYMENTS
+  - CONSUMER_NAME=payment-monitor
+  - HOSTNAME=payment-monitor-js
+  - REPLAY_HISTORY=true  # Replay all historical messages!
 ```
 
-## Development
+**Key difference:** Can replay ALL messages from beginning of stream, not just new messages.
 
-### Build Locally
+**Use case:** Catch up on messages missed during downtime.
 
-```bash
-# Publisher
-cd Publisher
-dotnet restore
-dotnet build
-dotnet run
-
-# Subscriber
-cd Subscriber
-dotnet restore
-dotnet build
-dotnet run
-```
-
-### Environment Variables for Local Run
-
-```bash
-export NATS_URL=nats://localhost:4222
-export NATS_SUBJECT=events.test
-export HOSTNAME=csharp-local
-export PUBLISH_INTERVAL=2.0
-```
-
-### Docker Build
-
-```bash
-# Publisher
-docker build -t csharp-publisher ./Publisher
-
-# Subscriber
-docker build -t csharp-subscriber ./Subscriber
-```
-
-## Cross-Language Communication
-
-This C# implementation is fully compatible with Python and other implementations.
-
-### Test Python → C#
-
-```bash
-# Start Python publisher (from ../python)
-cd ../python && docker-compose up -d publisher
-
-# Start C# subscriber
-cd ../csharp && docker-compose up -d subscriber
-
-# View C# subscriber receiving Python messages
-docker logs -f csharp-subscriber | grep "python"
-```
-
-### Test C# → Python
-
-```bash
-# Start C# publisher
-cd csharp && docker-compose up -d publisher
-
-# Start Python subscriber (from ../python)
-cd ../python && docker-compose up -d subscriber
-
-# View Python subscriber receiving C# messages
-docker logs -f nats-subscriber | grep "csharp"
-```
+See: [`../docs/jetstream-historical-replay.md`](../docs/jetstream-historical-replay.md)
 
 ## Deployment Scenarios
 
-### Single VM Deployment
+### Scenario 1: Learning NATS
 
 ```bash
-# Deploy C# stack
-docker-compose up -d --build
+# Deploy basic pub/sub
+docker-compose up -d publisher subscriber nats
+
+# View message flow
+docker-compose logs -f
 ```
 
-### Multi-VM Deployment
-
-On each VM:
+### Scenario 2: Monitor Remote Payment System
 
 ```bash
-# VM 1
-cd csharp
-echo "HOSTNAME=nats-1-csharp" > .env
-docker-compose up -d --build
+# On remote server (no console access needed)
+docker-compose up -d payment-publisher nats
 
-# VM 2
-cd csharp
-echo "HOSTNAME=nats-2-csharp" > .env
-docker-compose up -d --build
+# On monitoring server
+docker-compose up -d payment-monitor
+
+# View payment errors in Loki/Grafana
+# Query: {container_name="payment-monitor", level="ERROR"}
 ```
 
-### Scaling
+### Scenario 3: Production with Message Persistence
 
 ```bash
-# Scale publishers
-docker-compose up -d --scale publisher=3
+# Uncomment jetstream-setup in docker-compose.yml
 
-# Scale subscribers (with queue group)
-docker-compose up -d --scale subscriber=5
+# Deploy JetStream versions
+docker-compose up -d payment-publisher-js payment-monitor-js nats
+
+# Messages persist to disk
+# Monitor can replay history if it crashes
 ```
 
-## Performance
+### Scenario 4: Mixed Deployment (Test All Components)
 
-### Resource Usage
+```bash
+# Start everything
+docker-compose up -d --build
 
-- **Memory**: ~100 MB per container
-- **CPU**: <0.1 core idle, ~0.2 core at 1000 msg/s
-- **Startup**: ~1 second
-- **Image Size**: ~180 MB (Alpine-based)
+# You'll have:
+# - Basic pub/sub on events.test
+# - Payment simulation on payments.*
+# - Multiple monitors capturing different topics
+```
 
-### Throughput
+## Library Comparison
 
-- **Publisher**: Configurable, default 0.5 msg/s
-- **Subscriber**: Handles 1000+ msg/s
-- **Latency**: Typically <5ms (local network)
+| Feature | NATS.Client 1.1.8 | NATS.Net 2.4.0 |
+|---------|-------------------|----------------|
+| **Components** | Publisher, Subscriber, PaymentPublisher, MessageLogger | PaymentPublisher-JS, MessageLogger-JS |
+| **Persistence** | ❌ No | ✅ Yes (JetStream) |
+| **Historical Replay** | ❌ No | ✅ Yes |
+| **Durable Consumers** | ❌ No | ✅ Yes |
+| **At-Least-Once** | ❌ No | ✅ Yes |
+| **API Style** | Callback-based | Modern async/await |
+| **Status** | Legacy (maintained) | Modern (active development) |
+
+## Features
+
+### Common Features (All Components)
+
+- ✅ Structured JSON logging for Loki
+- ✅ Automatic reconnection
+- ✅ Error handling
+- ✅ Docker support
+- ✅ Alpine-based images (~100-120 MB)
+- ✅ Non-root containers
+- ✅ Health checks
+
+### NATS.Client 1.x Components
+
+- Simple API
+- Callback-based subscriptions
+- Fire-and-forget publishing
+- No persistence (messages lost if no subscriber)
+
+### NATS.Net 2.x Components
+
+- Modern async/await API
+- JetStream persistence
+- Durable consumers
+- Historical replay
+- At-least-once delivery
+- Message acknowledgments
+
+## Configuration
+
+### Environment Variables (Common)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NATS_URL` | `nats://localhost:4222` | NATS server URL |
+| `HOSTNAME` | (component name) | Container hostname |
+
+### Publisher-Specific
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NATS_SUBJECT` | `events.test` | Subject to publish to |
+| `PUBLISH_INTERVAL` | `2.0` | Seconds between messages |
+
+### Subscriber-Specific
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NATS_SUBJECT` | `events.test` | Subject to subscribe to |
+| `QUEUE_GROUP` | (none) | Optional queue group for load balancing |
+
+### MessageLogger-Specific
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NATS_SUBJECT` | `>` | Subject filter (supports wildcards) |
+
+### JetStream-Specific
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STREAM_NAME` | `PAYMENTS` | JetStream stream name |
+| `CONSUMER_NAME` | `payment-monitor` | Durable consumer name |
+| `REPLAY_HISTORY` | `true` | Replay historical messages |
+
+## Querying Logs in Grafana
+
+### Basic Pub/Sub
+
+```logql
+# All basic publisher logs
+{container_name="csharp-publisher"}
+
+# All basic subscriber logs
+{container_name="csharp-subscriber"}
+
+# Publish rate
+rate({container_name="csharp-publisher"} |= "Message published" [1m])
+
+# Average latency
+avg_over_time({container_name="csharp-subscriber"} | json | unwrap latency_ms [5m])
+```
+
+### Payment Monitoring
+
+```logql
+# All payment errors (declined transactions)
+{container_name="payment-monitor", level="ERROR"}
+
+# Declined transactions with details
+{container_name="payment-monitor", level="ERROR"}
+| json
+| line_format "{{.data.decline_reason}}: ${{.data.amount}}"
+
+# Count by decline reason
+sum by (decline_reason) (
+  count_over_time(
+    {container_name="payment-monitor", level="ERROR"} | json [1h]
+  )
+)
+```
+
+### JetStream
+
+```logql
+# JetStream publisher with sequence numbers
+{container_name="payment-publisher-js"} | json | line_format "Seq {{.data.js_sequence}}"
+
+# Historical replay
+{container_name="payment-monitor-js"} | json | line_format "Processing seq {{.data.js_sequence}}"
+```
+
+## Docker Compose
+
+All components are defined in a single `docker-compose.yml`:
+
+```bash
+# Start specific components
+docker-compose up -d publisher subscriber nats
+
+# Start payment monitoring
+docker-compose up -d payment-publisher payment-monitor nats
+
+# Start JetStream versions
+docker-compose up -d payment-publisher-js payment-monitor-js nats
+
+# Start everything
+docker-compose up -d
+
+# View logs
+docker-compose logs -f <service-name>
+
+# Stop all
+docker-compose down
+```
 
 ## Troubleshooting
-
-### Containers Won't Start
-
-```bash
-# Check logs
-docker-compose logs
-
-# Rebuild images
-docker-compose build --no-cache
-docker-compose up -d
-```
 
 ### Publisher Not Connecting
 
 ```bash
 # Check NATS is running
-docker ps | grep nats
+docker logs nats-server-csharp
 
 # Check publisher logs
-docker-compose logs publisher
+docker logs csharp-publisher
 
-# Verify NATS URL
-docker exec csharp-publisher env | grep NATS_URL
+# Verify network
+docker exec csharp-publisher nc -zv nats 4222
 ```
 
 ### Subscriber Not Receiving Messages
 
 ```bash
-# Check subscription
-curl http://localhost:8222/subsz | jq
-
-# Check subscriber logs
-docker-compose logs subscriber
-
-# Verify subject matches
+# Verify subjects match
 docker logs csharp-publisher | head -1 | jq .subject
 docker logs csharp-subscriber | head -1 | jq .subject
+
+# Check subscriber is running
+docker logs csharp-subscriber
 ```
 
-### JSON Parsing Errors
+### Payment Publisher Has No Logs
 
-Ensure message format matches schema:
+This is **expected** - logging is disabled to simulate remote server without console access.
+
+**Verify it's working:**
+```bash
+# Check container is running
+docker ps | grep payment-publisher
+
+# Check payment-monitor logs instead
+docker logs payment-monitor
+# Should show payment transactions being captured
+```
+
+### JetStream Stream Not Found
 
 ```bash
-# Check publisher output
-docker logs csharp-publisher | head -1 | jq
+# Check if jetstream-setup ran
+docker logs jetstream-setup
 
-# Should have: message_id, timestamp, source, sequence, data
+# Manually create stream
+docker exec -it nats-server-csharp sh
+nats stream add PAYMENTS \
+  --subjects "payments.>" \
+  --storage file \
+  --retention limits \
+  --max-age 168h
 ```
 
-### No Logs in Loki
+### MessageLogger Not Replaying History
 
-1. Check Promtail is running on VM
-2. Verify Docker socket access
-3. Check container labels:
-   ```bash
-   docker inspect csharp-publisher | grep -A5 Labels
-   ```
-
-## Integration with Loki
-
-### Container Labels
-
-All containers have labels for Promtail discovery:
-
-```yaml
-labels:
-  - "logging=enabled"
-  - "component=publisher"  # or subscriber
-  - "language=csharp"
+**Check REPLAY_HISTORY setting:**
+```bash
+docker exec payment-monitor-js env | grep REPLAY_HISTORY
+# Should output: REPLAY_HISTORY=true
 ```
 
-### Query in Grafana
-
-```logql
-# All C# logs
-{language="csharp"}
-
-# C# publisher only
-{container_name="csharp-publisher"}
-
-# C# with errors
-{language="csharp"} | json | level="ERROR"
-
-# C# publish rate
-rate({container_name="csharp-publisher"} |= "Message published" [1m])
-
-# C# latency
-avg_over_time({container_name="csharp-subscriber"} | json | unwrap latency_ms [5m])
+**Reset consumer:**
+```bash
+docker exec -it nats-server-csharp sh
+nats consumer rm PAYMENTS payment-monitor
+docker-compose restart payment-monitor-js
 ```
 
-## Comparing with Python
+## Development
 
-| Feature | C# | Python |
-|---------|-----|--------|
-| Runtime | .NET 8 | Python 3.11 |
-| Memory | ~100 MB | ~128 MB |
-| Startup | ~1s | ~2s |
-| Image Size | ~180 MB | ~200 MB |
-| Library | NATS.Client | nats-py |
-
-Both implementations:
-- Use same message format
-- Produce same log structure
-- Are fully interoperable
-- Have same features
-
-## Dependencies
-
-- **NATS.Client** 2.0.0 - NATS client library
-- **System.Text.Json** 8.0.0 - JSON serialization
-- **.NET Runtime** 8.0 - Alpine-based
-
-## Docker Images
-
-- **Build**: `mcr.microsoft.com/dotnet/sdk:8.0-alpine`
-- **Runtime**: `mcr.microsoft.com/dotnet/runtime:8.0-alpine`
-
-## Code Quality
-
-### Null Safety
-
-Both projects use nullable reference types:
-
-```csharp
-<Nullable>enable</Nullable>
-```
-
-### Exception Handling
-
-- Connection failures: Auto-reconnect
-- Message parsing errors: Logged, not fatal
-- JSON serialization errors: Logged, counted as errors
-
-## Extending
-
-### Add Custom Message Fields
-
-Edit `Publisher/Program.cs`:
-
-```csharp
-var message = new MessageData
-{
-    MessageId = $"{_hostname}-{_messageCount}",
-    // ... existing fields ...
-    Data = new MessagePayload
-    {
-        // ... existing fields ...
-        CustomField = "your-value"  // Add here
-    }
-};
-```
-
-Add property to `MessagePayload` class:
-
-```csharp
-[JsonPropertyName("custom_field")]
-public string CustomField { get; set; } = string.Empty;
-```
-
-### Change Event Types
-
-Modify the `eventTypes` array in `PublishLoop()`:
-
-```csharp
-var eventTypes = new[] {
-    "user.login",
-    "user.logout",
-    "order.created",
-    "payment.processed",
-    "custom.event"  // Add new type
-};
-```
-
-## Testing
-
-### Manual Testing
+### Local Development (Without Docker)
 
 ```bash
-# Start stack
-docker-compose up -d --build
+# Install .NET 8 SDK
+# https://dotnet.microsoft.com/download
 
-# Wait 10 seconds
-sleep 10
+# Build publisher
+cd Publisher
+dotnet restore
+dotnet build
 
-# Check publisher sent messages
-docker logs csharp-publisher | grep "Message published" | wc -l
+# Run publisher
+export NATS_URL=nats://localhost:4222
+export NATS_SUBJECT=events.test
+dotnet run
 
-# Check subscriber received messages
-docker logs csharp-subscriber | grep "Message received" | wc -l
-
-# Should be roughly equal
+# In another terminal, build and run subscriber
+cd ../Subscriber
+dotnet restore
+dotnet build
+dotnet run
 ```
 
-### Cross-Language Testing
-
-See main README for cross-language test procedures.
-
-## Monitoring
-
-### Metrics
-
-Both publisher and subscriber log metrics:
-
-- **Publisher**: Every 50 messages
-- **Subscriber**: Every 60 seconds
-
-### Metrics Fields
-
-```json
-{
-  "total_messages": 150,
-  "total_errors": 0,
-  "uptime_seconds": 300.45,
-  "messages_per_second": 0.50,
-  "average_latency_ms": 2.34,
-  "error_rate": 0.0
-}
-```
-
-## Cleanup
+### Building Docker Images
 
 ```bash
-# Stop containers
-docker-compose down
+# Build specific component
+docker-compose build publisher
 
-# Remove volumes
-docker-compose down -v
+# Build JetStream versions
+docker-compose build payment-publisher-js payment-monitor-js
 
-# Remove images
-docker rmi csharp-publisher csharp-subscriber
+# Build all
+docker-compose build
 ```
+
+## Cross-Language Testing
+
+Test C# ↔ Python communication:
+
+```bash
+# Start C# publisher
+docker-compose up -d publisher nats
+
+# Start Python subscriber (from ../python)
+cd ../python
+docker-compose up -d subscriber
+
+# View Python subscriber receiving C# messages
+docker logs -f nats-subscriber | grep "csharp"
+```
+
+## Performance
+
+| Component | Memory | CPU (idle) | Throughput |
+|-----------|--------|------------|------------|
+| Publisher | ~100 MB | <0.1 core | ~2K msg/s |
+| Subscriber | ~100 MB | <0.1 core | ~2K msg/s |
+| PaymentPublisher | ~100 MB | <0.1 core | ~500 tx/s |
+| MessageLogger | ~100 MB | <0.1 core | ~1K msg/s |
+| PaymentPublisher-JS | ~120 MB | <0.1 core | ~1.5K msg/s |
+| MessageLogger-JS | ~120 MB | <0.1 core | ~1K msg/s |
+
+## Versions
+
+- **NATS Server:** 2.10.7-alpine
+- **.NET:** 8.0
+- **NATS.Client:** 1.1.8 (Publisher, Subscriber, PaymentPublisher, MessageLogger)
+- **NATS.Net:** 2.4.0 (PaymentPublisher-JetStream, MessageLogger-JetStream)
+- **System.Text.Json:** 8.0.5
+
+## Documentation
+
+### Component-Specific
+- [`PaymentPublisher/README.md`](PaymentPublisher/README.md) - Payment publisher details
+
+### Shared Documentation
+- [`../docs/component-overview.md`](../docs/component-overview.md) - Component guide
+- [`../docs/payment-monitoring-setup.md`](../docs/payment-monitoring-setup.md) - Payment monitoring setup
+- [`../docs/message-logging-guide.md`](../docs/message-logging-guide.md) - Message logging guide
+- [`../docs/upgrade-to-nats-net-2.md`](../docs/upgrade-to-nats-net-2.md) - NATS.Net 2.x upgrade
+- [`../docs/jetstream-historical-replay.md`](../docs/jetstream-historical-replay.md) - JetStream guide
 
 ## Support
 
 For issues:
-- Check main [`../README.md`](../README.md)
-- Review [`../docs/architecture.md`](../docs/architecture.md)
-- Check [`../docs/message-format.md`](../docs/message-format.md)
-- Open issue in GitLab
-
-## License
-
-[Your License Here]
+- Check component-specific README files
+- Review [`../docs/component-overview.md`](../docs/component-overview.md)
+- Check troubleshooting sections in relevant docs
+- Review Docker logs: `docker logs <container-name>`
