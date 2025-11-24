@@ -6,12 +6,17 @@ Multiple .NET 8 implementations of NATS publisher/subscriber with structured JSO
 
 This directory contains **6 different C# components** serving different purposes:
 
-### 1. Basic Pub/Sub (Publisher/ + Subscriber/)
-- **Library:** NATS.Client 1.1.8 (legacy)
-- **Purpose:** Simple message demonstration
-- **Features:** Basic pub/sub, cross-language compatible with Python
+### 1. Basic Publisher + JetStream Subscriber (Publisher/ + Subscriber/)
+- **Publisher Library:** NATS.Client 1.1.8 (legacy, core NATS)
+- **Subscriber Library:** NATS.Net 2.4.0 (modern, JetStream)
+- **Purpose:** Demonstrate JetStream persistence with legacy publisher compatibility
+- **Features:**
+  - Fetches last 10 messages on startup
+  - Auto-creates JetStream stream if missing
+  - Durable consumer for new messages
+  - Cross-compatible with legacy publishers
 - **Deploy:** `docker-compose up -d publisher subscriber nats`
-- **Use Case:** Learning NATS basics, cross-language testing
+- **Use Case:** Catch up on missed messages, persist events from legacy publishers
 
 ### 2. Payment Monitoring (PaymentPublisher/ + MessageLogger/)
 - **Library:** NATS.Client 1.1.8 (legacy)
@@ -40,10 +45,10 @@ csharp/
 │   ├── Dockerfile
 │   ├── Publisher.csproj
 │   └── Program.cs
-├── Subscriber/                     # Basic subscriber (NATS.Client 1.x)
+├── Subscriber/                     # JetStream subscriber (NATS.Net 2.x)
 │   ├── Dockerfile
-│   ├── Subscriber.csproj
-│   └── Program.cs
+│   ├── Subscriber.csproj           # Uses NATS.Net 2.4.0
+│   └── Program.cs                  # Fetches last 10 msgs + subscribes
 ├── PaymentPublisher/               # Payment simulator (NATS.Client 1.x)
 │   ├── README.md
 │   ├── Dockerfile

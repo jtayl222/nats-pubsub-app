@@ -4,13 +4,14 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using NATS.Client;
+using NATS.Client.Core;
+using NATS.Client.JetStream;
+using NATS.Client.JetStream.Models;
 
 namespace NatsSubscriber
 {
     class Program
     {
-        private static IConnection? _connection;
         private static long _messageCount = 0;
         private static long _errorCount = 0;
         private static DateTime _startTime = DateTime.UtcNow;
@@ -18,23 +19,46 @@ namespace NatsSubscriber
         private static double _totalLatencyMs = 0;
         private static readonly string _natsUrl = Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
         private static readonly string _subject = Environment.GetEnvironmentVariable("NATS_SUBJECT") ?? "events.test";
+        private static readonly string _streamName = Environment.GetEnvironmentVariable("STREAM_NAME") ?? "EVENTS";
+        private static readonly string _consumerName = Environment.GetEnvironmentVariable("CONSUMER_NAME") ?? "subscriber-consumer";
         private static readonly string _hostname = Environment.GetEnvironmentVariable("HOSTNAME") ?? "csharp-subscriber";
         private static readonly string? _queueGroup = Environment.GetEnvironmentVariable("QUEUE_GROUP");
 
         static async Task Main(string[] args)
         {
-            LogInfo("Starting NATS Subscriber", new
+            LogInfo("Starting NATS Subscriber (JetStream)", new
             {
                 nats_url = _natsUrl,
                 subject = _subject,
+                stream = _streamName,
+                consumer = _consumerName,
                 hostname = _hostname,
                 queue_group = _queueGroup ?? "none"
             });
 
             try
             {
-                await ConnectToNats();
-                await Subscribe();
+                var opts = new NatsOpts { Url = _natsUrl };
+                await using var nats = new NatsConnection(opts);
+                await nats.ConnectAsync();
+
+                LogInfo("Connected to NATS", new
+                {
+                    url = _natsUrl,
+                    server_info = nats.ServerInfo?.ToString()
+                });
+
+                // Create JetStream context
+                var js = new NatsJSContext(nats);
+
+                // Ensure stream exists (create if needed)
+                await EnsureStreamExists(js);
+
+                // Fetch last 10 messages first
+                await FetchRecentMessages(js);
+
+                // Then subscribe for ongoing messages
+                await Subscribe(js);
 
                 // Metrics logging task
                 var metricsTask = Task.Run(async () =>
@@ -56,85 +80,157 @@ namespace NatsSubscriber
             }
         }
 
-        static async Task ConnectToNats()
+        static async Task EnsureStreamExists(INatsJSContext js)
         {
-            LogInfo("Connecting to NATS", new { nats_url = _natsUrl });
-
             try
             {
-                var options = ConnectionFactory.GetDefaultOptions();
-                options.Url = _natsUrl;
-                options.Name = $"subscriber-{_hostname}";
-                options.ReconnectWait = 2000;
-                options.MaxReconnect = 60;
-                options.PingInterval = 20000;
-                options.MaxPingsOut = 3;
+                // Try to get stream info
+                await js.GetStreamAsync(_streamName);
+                LogInfo("Stream already exists", new { stream = _streamName });
+            }
+            catch (NatsJSApiException ex) when (ex.Error.Code == 404)
+            {
+                // Stream doesn't exist, create it
+                LogInfo("Stream not found, creating it", new { stream = _streamName, subject = _subject });
 
-                options.DisconnectedEventHandler = (sender, args) =>
+                var streamConfig = new StreamConfig(_streamName, new[] { _subject })
                 {
-                    LogWarning("Disconnected from NATS", new { });
+                    Description = "Event stream for subscriber",
+                    Retention = StreamConfigRetention.Limits,
+                    MaxMsgs = 1000,
+                    MaxBytes = 1024 * 1024 * 10, // 10MB
+                    MaxAge = TimeSpan.FromHours(24),
+                    Storage = StreamConfigStorage.File,
+                    NumReplicas = 1
                 };
 
-                options.ReconnectedEventHandler = (sender, args) =>
-                {
-                    LogInfo("Reconnected to NATS", new { });
-                };
-
-                options.ClosedEventHandler = (sender, args) =>
-                {
-                    LogWarning("Connection closed", new { });
-                };
-
-                var factory = new ConnectionFactory();
-                _connection = factory.CreateConnection(options);
-
-                LogInfo("Connected to NATS successfully", new
-                {
-                    server_info = _connection.ConnectedUrl,
-                    client_id = _connection.ClientID
-                });
-
-                await Task.CompletedTask;
+                await js.CreateStreamAsync(streamConfig);
+                LogInfo("Stream created successfully", new { stream = _streamName });
             }
             catch (Exception ex)
             {
-                LogError("Failed to connect to NATS", ex);
+                LogError("Error ensuring stream exists", ex);
                 throw;
             }
         }
 
-        static async Task Subscribe()
+        static async Task FetchRecentMessages(INatsJSContext js)
         {
-            LogInfo("Subscribing to subject", new
+            try
             {
+                LogInfo("Fetching last 10 messages from stream", new
+                {
+                    stream = _streamName,
+                    subject = _subject
+                });
+
+                // Create a temporary consumer configured to deliver last N messages
+                var fetchConsumerConfig = new ConsumerConfig
+                {
+                    Name = $"{_consumerName}-fetch-{Guid.NewGuid()}",
+                    DeliverPolicy = ConsumerConfigDeliverPolicy.LastPerSubject,
+                    FilterSubject = _subject,
+                    AckPolicy = ConsumerConfigAckPolicy.None,
+                    InactiveThreshold = TimeSpan.FromSeconds(10)
+                };
+
+                var fetchConsumer = await js.CreateConsumerAsync(_streamName, fetchConsumerConfig);
+
+                // Fetch up to 10 messages
+                var fetchedCount = 0;
+                var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+                try
+                {
+                    await foreach (var msg in fetchConsumer.FetchAsync<byte[]>(opts: new NatsJSFetchOpts { MaxMsgs = 10, Expires = TimeSpan.FromSeconds(5) }, cancellationToken: cts.Token))
+                    {
+                        ProcessMessage(msg, isHistory: true);
+                        fetchedCount++;
+
+                        if (fetchedCount >= 10)
+                            break;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Timeout is expected if there are fewer than 10 messages
+                }
+                catch (Exception ex)
+                {
+                    LogError("Error during fetch", ex);
+                }
+
+                LogInfo("Finished fetching recent messages", new
+                {
+                    fetched_count = fetchedCount,
+                    stream = _streamName
+                });
+
+                // Delete the temporary consumer
+                try
+                {
+                    await js.DeleteConsumerAsync(_streamName, fetchConsumerConfig.Name);
+                }
+                catch
+                {
+                    // Ignore errors deleting temp consumer
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError("Error fetching recent messages", ex);
+                LogInfo("Continuing with subscription", new { });
+            }
+        }
+
+        static async Task Subscribe(INatsJSContext js)
+        {
+            LogInfo("Subscribing to stream for new messages", new
+            {
+                stream = _streamName,
                 subject = _subject,
-                queue_group = _queueGroup ?? "none"
+                consumer = _consumerName
             });
 
             try
             {
-                EventHandler<MsgHandlerEventArgs> handler = (sender, args) =>
+                // Configure consumer for new messages only
+                var consumerConfig = new ConsumerConfig
                 {
-                    HandleMessage(args.Message);
+                    Name = _consumerName,
+                    DurableName = _consumerName,
+                    AckPolicy = ConsumerConfigAckPolicy.Explicit,
+                    DeliverPolicy = ConsumerConfigDeliverPolicy.New, // Only new messages
+                    FilterSubject = _subject,
+                    MaxDeliver = 3,
+                    AckWait = TimeSpan.FromSeconds(30)
                 };
 
-                IAsyncSubscription subscription;
-                if (!string.IsNullOrEmpty(_queueGroup))
-                {
-                    subscription = _connection!.SubscribeAsync(_subject, _queueGroup, handler);
-                }
-                else
-                {
-                    subscription = _connection!.SubscribeAsync(_subject, handler);
-                }
+                // Create or update consumer
+                var consumer = await js.CreateOrUpdateConsumerAsync(_streamName, consumerConfig);
 
                 LogInfo("Subscription active", new
                 {
-                    subject = _subject,
-                    queue_group = _queueGroup ?? "none"
+                    consumer = _consumerName,
+                    stream = _streamName,
+                    subject = _subject
                 });
 
-                await Task.CompletedTask;
+                // Consume messages
+                await foreach (var msg in consumer.ConsumeAsync<byte[]>())
+                {
+                    try
+                    {
+                        ProcessMessage(msg, isHistory: false);
+                        await msg.AckAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        _errorCount++;
+                        LogError("Error processing message", ex);
+                        await msg.NakAsync();
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -143,7 +239,7 @@ namespace NatsSubscriber
             }
         }
 
-        static void HandleMessage(Msg msg)
+        static void ProcessMessage(NatsJSMsg<byte[]> msg, bool isHistory)
         {
             var receiveTime = DateTime.UtcNow;
             _messageCount++;
@@ -151,6 +247,13 @@ namespace NatsSubscriber
 
             try
             {
+                if (msg.Data == null)
+                {
+                    _errorCount++;
+                    LogWarning("Message has null data", new { subject = msg.Subject });
+                    return;
+                }
+
                 var json = Encoding.UTF8.GetString(msg.Data);
                 var message = JsonSerializer.Deserialize<MessageData>(json, new JsonSerializerOptions
                 {
@@ -169,16 +272,18 @@ namespace NatsSubscriber
                 var latencyMs = (receiveTime - messageTimestamp).TotalMilliseconds;
                 _totalLatencyMs += latencyMs;
 
-                LogInfo("Message received", new
+                LogInfo(isHistory ? "Historical message received" : "Message received", new
                 {
                     message_id = message.MessageId,
                     subject = msg.Subject,
                     size_bytes = msg.Data.Length,
                     source = message.Source,
                     sequence = message.Sequence,
+                    js_sequence = msg.Metadata?.Sequence.Stream,
+                    js_timestamp = msg.Metadata?.Timestamp,
                     latency_ms = Math.Round(latencyMs, 2),
                     event_type = message.Data?.EventType ?? "unknown",
-                    reply_to = msg.Reply ?? ""
+                    is_history = isHistory
                 });
 
                 // Log metrics every 50 messages
@@ -238,8 +343,9 @@ namespace NatsSubscriber
             {
                 timestamp = DateTime.UtcNow.ToString("o"),
                 level = level,
-                logger = "nats-subscriber",
+                logger = "nats-subscriber-jetstream",
                 message = message,
+                hostname = _hostname,
                 module = "Program",
                 function = new System.Diagnostics.StackTrace().GetFrame(2)?.GetMethod()?.Name ?? "Unknown"
             };

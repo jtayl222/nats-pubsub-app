@@ -8,7 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="NATS.Client" Version="1.1.8" />
+    <!-- Modern NATS client with JetStream support -->
+    <PackageReference Include="NATS.Net" Version="2.4.0" />
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 
