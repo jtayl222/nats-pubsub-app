@@ -89,11 +89,24 @@ public class NatsService : IDisposable
             // Get or create stream for this subject
             var streamName = await EnsureStreamExistsAsync(subject);
 
-            // Create ephemeral consumer for fetching
+            // Get stream info to find the last sequence number
+            var streamInfo = await _js.GetStreamAsync(streamName);
+            var lastSeq = streamInfo.Info.State.LastSeq;
+            var totalMessages = streamInfo.Info.State.Messages;
+
+            // Calculate start sequence to get last N messages
+            // If stream has fewer messages than limit, start from beginning
+            var startSeq = (ulong)Math.Max(1, (long)lastSeq - limit + 1);
+
+            _logger.LogInformation("Stream {Stream} has {TotalMessages} messages (seq {FirstSeq}-{LastSeq}), fetching from seq {StartSeq}",
+                streamName, totalMessages, streamInfo.Info.State.FirstSeq, lastSeq, startSeq);
+
+            // Create ephemeral consumer starting from calculated sequence
             var consumerConfig = new ConsumerConfig
             {
                 Name = $"http-fetch-{Guid.NewGuid()}",
-                DeliverPolicy = ConsumerConfigDeliverPolicy.LastPerSubject,
+                DeliverPolicy = ConsumerConfigDeliverPolicy.ByStartSequence,
+                OptStartSeq = startSeq,
                 FilterSubject = subject,
                 AckPolicy = ConsumerConfigAckPolicy.None,
                 InactiveThreshold = TimeSpan.FromSeconds(5)
