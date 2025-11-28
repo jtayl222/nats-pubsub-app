@@ -206,6 +206,42 @@ app.MapGet("/api/streams/{name}", async (
     return operation;
 });
 
+// GET /api/streams/{name}/subjects - Get all subjects in a stream
+app.MapGet("/api/streams/{name}/subjects", async (
+    string name,
+    NatsService nats,
+    ILogger<Program> logger) =>
+{
+    try
+    {
+        logger.LogInformation("Getting subjects for stream: {Stream}", name);
+        var subjects = await nats.GetStreamSubjectsAsync(name);
+        return Results.Ok(subjects);
+    }
+    catch (NatsJSApiException ex) when (ex.Error.Code == 404)
+    {
+        logger.LogWarning("Stream not found: {Stream}", name);
+        return Results.NotFound(new { error = $"Stream '{name}' not found" });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to get subjects for stream {Stream}", name);
+        return Results.Problem(
+            title: "Failed to get stream subjects",
+            detail: ex.Message,
+            statusCode: 500
+        );
+    }
+})
+.WithName("GetStreamSubjects")
+.WithTags("Streams")
+.WithOpenApi(operation =>
+{
+    operation.Summary = "Get all distinct subjects in a stream";
+    operation.Description = "Returns a list of all distinct subjects that have messages in the stream, along with message counts per subject. Results are ordered by message count (descending).";
+    return operation;
+});
+
 // Root endpoint
 app.MapGet("/", () => new
 {
@@ -218,6 +254,7 @@ app.MapGet("/", () => new
         "GET /api/messages/{subject}?limit=10 - Fetch messages",
         "GET /api/streams - List all JetStream streams",
         "GET /api/streams/{name} - Get stream information",
+        "GET /api/streams/{name}/subjects - List subjects in stream",
         "GET /swagger - API documentation"
     }
 })

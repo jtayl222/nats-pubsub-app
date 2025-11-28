@@ -16,3 +16,17 @@ public class StreamListResponse
     public int Count { get; set; }
     public List<StreamSummary> Streams { get; set; } = new();
 }
+
+public class SubjectDetail
+{
+    public string Subject { get; set; } = string.Empty;
+    public ulong Messages { get; set; }
+}
+
+public class StreamSubjectsResponse
+{
+    public string StreamName { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public List<SubjectDetail> Subjects { get; set; } = new();
+    public string? Note { get; set; }
+}

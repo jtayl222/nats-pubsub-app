@@ -301,6 +301,54 @@ public class NatsService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Gets all distinct subjects with messages in a stream
+    /// </summary>
+    public async Task<StreamSubjectsResponse> GetStreamSubjectsAsync(string name)
+    {
+        try
+        {
+            // Get stream info with subject details - need to request with subject filter
+            var request = new StreamInfoRequest { SubjectsFilter = ">" };
+            var stream = await _js.GetStreamAsync(name, request);
+
+            var subjects = new List<SubjectDetail>();
+            string? note = null;
+
+            // Check if stream has subject details
+            if (stream.Info.State.Subjects != null && stream.Info.State.Subjects.Count > 0)
+            {
+                foreach (var kvp in stream.Info.State.Subjects)
+                {
+                    subjects.Add(new SubjectDetail
+                    {
+                        Subject = kvp.Key,
+                        Messages = (ulong)kvp.Value
+                    });
+                }
+            }
+            else
+            {
+                note = "No subject-level statistics available for this stream";
+            }
+
+            _logger.LogInformation("Retrieved {Count} subjects from stream {Stream}", subjects.Count, name);
+
+            return new StreamSubjectsResponse
+            {
+                StreamName = name,
+                Count = subjects.Count,
+                Subjects = subjects.OrderByDescending(s => s.Messages).ToList(),
+                Note = note
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get subjects for stream {Stream}", name);
+            throw;
+        }
+    }
+
     public void Dispose()
     {
         _nats?.DisposeAsync().AsTask().Wait();
