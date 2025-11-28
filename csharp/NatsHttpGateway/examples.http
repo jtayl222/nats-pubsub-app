@@ -1,0 +1,116 @@
+### NATS HTTP Gateway - Example Requests
+### Use with REST Client extension in VS Code or similar tools
+
+@baseUrl = http://localhost:8080
+@subject = events.test
+
+### Health Check
+GET {{baseUrl}}/health
+
+### Root endpoint - API info
+GET {{baseUrl}}/
+
+### Publish a simple message to events.test
+POST {{baseUrl}}/api/messages/{{subject}}
+Content-Type: application/json
+
+{
+  "source": "example-app",
+  "data": {
+    "event_type": "user.login",
+    "user_id": 12345,
+    "username": "john.doe",
+    "ip_address": "192.168.1.1"
+  }
+}
+
+### Publish with custom message ID
+POST {{baseUrl}}/api/messages/events.test
+Content-Type: application/json
+
+{
+  "message_id": "custom-msg-001",
+  "source": "my-service",
+  "data": {
+    "event_type": "order.created",
+    "order_id": "ORD-12345",
+    "amount": 99.99,
+    "currency": "USD",
+    "items": ["item1", "item2"]
+  }
+}
+
+### Publish to payments subject
+POST {{baseUrl}}/api/messages/payments.approved
+Content-Type: application/json
+
+{
+  "data": {
+    "transaction_id": "TXN-99999",
+    "amount": 149.99,
+    "currency": "USD",
+    "card_type": "visa"
+  }
+}
+
+### Fetch last 10 messages from events.test
+GET {{baseUrl}}/api/messages/events.test?limit=10
+
+### Fetch last 5 messages
+GET {{baseUrl}}/api/messages/events.test?limit=5
+
+### Fetch last 50 messages
+GET {{baseUrl}}/api/messages/events.test?limit=50
+
+### Fetch messages from payments subject
+GET {{baseUrl}}/api/messages/payments.approved?limit=10
+
+### Bulk publish - Send multiple messages
+POST {{baseUrl}}/api/messages/events.bulk-test
+Content-Type: application/json
+
+{
+  "data": {
+    "batch_id": "batch-001",
+    "count": 100,
+    "started_at": "2025-11-24T22:00:00Z"
+  }
+}
+
+###
+POST {{baseUrl}}/api/messages/events.bulk-test
+Content-Type: application/json
+
+{
+  "data": {
+    "batch_id": "batch-002",
+    "count": 200,
+    "started_at": "2025-11-24T22:01:00Z"
+  }
+}
+
+### Complex nested data example
+POST {{baseUrl}}/api/messages/events.user.profile.updated
+Content-Type: application/json
+
+{
+  "source": "user-service",
+  "data": {
+    "user": {
+      "id": 12345,
+      "email": "user@example.com",
+      "profile": {
+        "firstName": "John",
+        "lastName": "Doe",
+        "preferences": {
+          "theme": "dark",
+          "notifications": true
+        }
+      }
+    },
+    "changed_fields": ["profile.preferences.theme"],
+    "previous_values": {
+      "theme": "light"
+    }
+  }
+}

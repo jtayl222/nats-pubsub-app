@@ -4,7 +4,7 @@ Multiple .NET 8 implementations of NATS publisher/subscriber with structured JSO
 
 ## Components Overview
 
-This directory contains **6 different C# components** serving different purposes:
+This directory contains **7 different C# components** serving different purposes:
 
 ### 1. Basic Publisher + JetStream Subscriber (Publisher/ + Subscriber/)
 - **Publisher Library:** NATS.Client 1.1.8 (legacy, core NATS)
@@ -34,6 +34,19 @@ This directory contains **6 different C# components** serving different purposes
 - **Use Case:** Production persistence, catch up after downtime
 - **Docs:** [`../docs/upgrade-to-nats-net-2.md`](../docs/upgrade-to-nats-net-2.md)
 
+### 4. HTTP Gateway (NatsHttpGateway/)
+- **Library:** NATS.Net 2.4.0 (modern) + ASP.NET Core
+- **Purpose:** RESTful HTTP/JSON gateway for NATS JetStream
+- **Features:**
+  - POST /api/messages/{subject} - Publish to any subject
+  - GET /api/messages/{subject}?limit=N - Fetch last N messages
+  - Auto-creates JetStream streams
+  - Stateless design (scales horizontally)
+  - Swagger/OpenAPI documentation
+- **Deploy:** `docker-compose up -d nats-http-gateway`
+- **Use Case:** Web APIs, webhooks, mobile apps, legacy system integration
+- **Docs:** [`NatsHttpGateway/README.md`](NatsHttpGateway/README.md)
+
 ## Repository Structure
 
 ```
@@ -62,10 +75,21 @@ csharp/
 │   ├── Dockerfile
 │   ├── PaymentPublisher.csproj
 │   └── Program.cs
-└── MessageLogger-JetStream/        # Monitor with replay (NATS.Net 2.x)
+├── MessageLogger-JetStream/        # Monitor with replay (NATS.Net 2.x)
+│   ├── Dockerfile
+│   ├── MessageLogger.csproj
+│   └── Program.cs
+└── NatsHttpGateway/                # HTTP/REST API gateway (ASP.NET Core + NATS.Net 2.x)
+    ├── README.md
     ├── Dockerfile
-    ├── MessageLogger.csproj
-    └── Program.cs
+    ├── NatsHttpGateway.csproj
+    ├── Program.cs                  # Minimal API endpoints
+    ├── appsettings.json
+    ├── Services/
+    │   └── NatsService.cs          # NATS operations
+    └── Models/
+        ├── PublishRequest.cs
+        └── MessageResponse.cs
 ```
 
 ## Quick Start
