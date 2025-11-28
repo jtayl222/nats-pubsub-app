@@ -26,7 +26,7 @@ services:
           cpus: '0.5'
           memory: 256M
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/varz"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -163,32 +163,74 @@ services:
       - "com.docker.compose.project=nats-pubsub-csharp"
       - "com.docker.compose.service=payment-monitor"
 
+  nats-http-gateway:
+    build:
+      context: ./NatsHttpGateway
+      dockerfile: Dockerfile
+    container_name: nats-http-gateway
+    ports:
+      - "8080:8080"  # HTTP API
+    environment:
+      - NATS_URL=nats://nats:4222
+      - STREAM_PREFIX=EVENTS
+      - ASPNETCORE_URLS=http://+:8080
+      - ASPNETCORE_ENVIRONMENT=Production
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - nats-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    # Healthcheck disabled - ASP.NET runtime image doesn't include curl/wget
+    # To enable: install curl in Dockerfile or use external monitoring
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 10s
+    labels:
+      - "logging=enabled"
+      - "component=http-gateway"
+      - "language=csharp"
+      - "service_type=api"
+      - "com.docker.compose.project=nats-pubsub-csharp"
+      - "com.docker.compose.service=nats-http-gateway"
+
   # JetStream stream setup (optional - for message persistence)
   # Uncomment to enable historical message storage
-  # jetstream-setup:
-  #   image: natsio/nats-box:latest
-  #   container_name: jetstream-setup
-  #   depends_on:
-  #     nats:
-  #       condition: service_healthy
-  #   networks:
-  #     - nats-network
-  #   command: |
-  #     sh -c "
-  #       echo 'Setting up JetStream streams...' &&
-  #       sleep 5 &&
-  #       nats --server nats://nats:4222 stream add PAYMENTS \
-  #         --subjects 'payments.>' \
-  #         --storage file \
-  #         --retention limits \
-  #         --max-age 168h \
-  #         --max-bytes 1G \
-  #         --replicas 1 \
-  #         --discard old \
-  #         --defaults || echo 'Stream already exists' &&
-  #       echo 'JetStream setup complete'
-  #     "
-  #   restart: "no"  # Run once on startup
+  jetstream-setup:
+    image: natsio/nats-box:latest
+    container_name: jetstream-setup
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - nats-network
+    command: |
+      sh -c "
+        echo 'Setting up JetStream streams...' &&
+        sleep 5 &&
+        nats --server nats://nats:4222 stream add PAYMENTS \
+          --subjects 'payments.>' \
+          --storage file \
+          --retention limits \
+          --max-age 168h \
+          --max-bytes 1G \
+          --replicas 1 \
+          --discard old \
+          --defaults || echo 'Stream already exists' &&
+        echo 'JetStream setup complete'
+      "
+    restart: "no"  # Run once on startup
 
 networks:
   nats-network:
