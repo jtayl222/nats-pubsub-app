@@ -1,3 +1,4 @@
+using NATS.Client.JetStream;
 using NatsHttpGateway.Models;
 using NatsHttpGateway.Services;
 
@@ -135,6 +136,76 @@ app.MapGet("/api/messages/{subject}", async (
     return operation;
 });
 
+// GET /api/streams - List all JetStream streams
+app.MapGet("/api/streams", async (
+    NatsService nats,
+    ILogger<Program> logger) =>
+{
+    try
+    {
+        logger.LogInformation("Listing all JetStream streams");
+        var streams = await nats.ListStreamsAsync();
+        return Results.Ok(new StreamListResponse
+        {
+            Count = streams.Count,
+            Streams = streams
+        });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to list streams");
+        return Results.Problem(
+            title: "Failed to list streams",
+            detail: ex.Message,
+            statusCode: 500
+        );
+    }
+})
+.WithName("ListStreams")
+.WithTags("Streams")
+.WithOpenApi(operation =>
+{
+    operation.Summary = "List all JetStream streams";
+    operation.Description = "Returns information about all JetStream streams including message counts, subjects, and consumer counts.";
+    return operation;
+});
+
+// GET /api/streams/{name} - Get specific stream info
+app.MapGet("/api/streams/{name}", async (
+    string name,
+    NatsService nats,
+    ILogger<Program> logger) =>
+{
+    try
+    {
+        logger.LogInformation("Getting info for stream: {Stream}", name);
+        var stream = await nats.GetStreamInfoAsync(name);
+        return Results.Ok(stream);
+    }
+    catch (NatsJSApiException ex) when (ex.Error.Code == 404)
+    {
+        logger.LogWarning("Stream not found: {Stream}", name);
+        return Results.NotFound(new { error = $"Stream '{name}' not found" });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to get stream info for {Stream}", name);
+        return Results.Problem(
+            title: "Failed to get stream info",
+            detail: ex.Message,
+            statusCode: 500
+        );
+    }
+})
+.WithName("GetStream")
+.WithTags("Streams")
+.WithOpenApi(operation =>
+{
+    operation.Summary = "Get information about a specific stream";
+    operation.Description = "Returns detailed information about a specific JetStream stream including message counts, sequence numbers, and consumer count.";
+    return operation;
+});
+
 // Root endpoint
 app.MapGet("/", () => new
 {
@@ -145,6 +216,8 @@ app.MapGet("/", () => new
         "GET /health - Health check",
         "POST /api/messages/{subject} - Publish message",
         "GET /api/messages/{subject}?limit=10 - Fetch messages",
+        "GET /api/streams - List all JetStream streams",
+        "GET /api/streams/{name} - Get stream information",
         "GET /swagger - API documentation"
     }
 })

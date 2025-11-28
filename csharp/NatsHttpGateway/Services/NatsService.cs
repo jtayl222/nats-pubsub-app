@@ -239,6 +239,68 @@ public class NatsService : IDisposable
         return parts.Length > 0 ? $"{parts[0]}.>" : ">";
     }
 
+    /// <summary>
+    /// Lists all JetStream streams
+    /// </summary>
+    public async Task<List<StreamSummary>> ListStreamsAsync()
+    {
+        try
+        {
+            var streams = new List<StreamSummary>();
+
+            await foreach (var stream in _js.ListStreamsAsync())
+            {
+                streams.Add(new StreamSummary
+                {
+                    Name = stream.Info.Config.Name,
+                    Subjects = stream.Info.Config.Subjects?.ToArray() ?? Array.Empty<string>(),
+                    Messages = (ulong)stream.Info.State.Messages,
+                    Bytes = (ulong)stream.Info.State.Bytes,
+                    FirstSeq = stream.Info.State.FirstSeq,
+                    LastSeq = stream.Info.State.LastSeq,
+                    Consumers = (int)stream.Info.State.ConsumerCount
+                });
+            }
+
+            _logger.LogInformation("Listed {Count} JetStream streams", streams.Count);
+            return streams;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list JetStream streams");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Gets detailed information about a specific stream
+    /// </summary>
+    public async Task<StreamSummary> GetStreamInfoAsync(string name)
+    {
+        try
+        {
+            var stream = await _js.GetStreamAsync(name);
+
+            _logger.LogInformation("Retrieved info for stream {Stream}", name);
+
+            return new StreamSummary
+            {
+                Name = stream.Info.Config.Name,
+                Subjects = stream.Info.Config.Subjects?.ToArray() ?? Array.Empty<string>(),
+                Messages = (ulong)stream.Info.State.Messages,
+                Bytes = (ulong)stream.Info.State.Bytes,
+                FirstSeq = stream.Info.State.FirstSeq,
+                LastSeq = stream.Info.State.LastSeq,
+                Consumers = (int)stream.Info.State.ConsumerCount
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get stream info for {Stream}", name);
+            throw;
+        }
+    }
+
     public void Dispose()
     {
         _nats?.DisposeAsync().AsTask().Wait();
