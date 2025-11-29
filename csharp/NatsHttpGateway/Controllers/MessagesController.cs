@@ -10,10 +10,10 @@ namespace NatsHttpGateway.Controllers;
 [Produces("application/json")]
 public class MessagesController : ControllerBase
 {
-    private readonly NatsService _natsService;
+    private readonly INatsService _natsService;
     private readonly ILogger<MessagesController> _logger;
 
-    public MessagesController(NatsService natsService, ILogger<MessagesController> logger)
+    public MessagesController(INatsService natsService, ILogger<MessagesController> logger)
     {
         _natsService = natsService;
         _logger = logger;

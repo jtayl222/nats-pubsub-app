@@ -7,7 +7,7 @@ using NatsHttpGateway.Models;
 
 namespace NatsHttpGateway.Services;
 
-public class NatsService : IDisposable
+public class NatsService : INatsService, IDisposable
 {
     private readonly NatsConnection _nats;
     private readonly INatsJSContext _js;

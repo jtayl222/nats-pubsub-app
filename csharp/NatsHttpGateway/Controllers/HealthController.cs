@@ -9,9 +9,9 @@ namespace NatsHttpGateway.Controllers;
 [Produces("application/json")]
 public class HealthController : ControllerBase
 {
-    private readonly NatsService _natsService;
+    private readonly INatsService _natsService;
 
-    public HealthController(NatsService natsService)
+    public HealthController(INatsService natsService)
     {
         _natsService = natsService;
     }

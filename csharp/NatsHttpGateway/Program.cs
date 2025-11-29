@@ -36,7 +36,7 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // Register NATS service as singleton (reuse connection)
-builder.Services.AddSingleton<NatsService>();
+builder.Services.AddSingleton<INatsService, NatsService>();
 
 // Add CORS for development
 builder.Services.AddCors(options =>
