@@ -1,5 +1,3 @@
-using NATS.Client.JetStream;
-using NatsHttpGateway.Models;
 using NatsHttpGateway.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -17,7 +15,8 @@ builder.Logging.AddJsonConsole(options =>
     };
 });
 
-// Add services
+// Add controllers and API documentation
+builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -26,6 +25,14 @@ builder.Services.AddSwaggerGen(c =>
         Version = "v1",
         Description = "HTTP/REST gateway for NATS JetStream messaging"
     });
+
+    // Include XML comments for Swagger documentation
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+    {
+        c.IncludeXmlComments(xmlPath);
+    }
 });
 
 // Register NATS service as singleton (reuse connection)
@@ -51,196 +58,8 @@ app.UseSwaggerUI();
 
 app.UseCors();
 
-// Health check endpoint
-app.MapGet("/health", (NatsService nats) =>
-{
-    return Results.Ok(new HealthResponse
-    {
-        Status = nats.IsConnected ? "healthy" : "unhealthy",
-        NatsConnected = nats.IsConnected,
-        NatsUrl = nats.NatsUrl,
-        JetStreamAvailable = nats.IsJetStreamAvailable,
-        Timestamp = DateTime.UtcNow
-    });
-})
-.WithName("HealthCheck")
-.WithTags("Health")
-.WithOpenApi();
-
-// POST /api/messages/{subject} - Publish message to subject
-app.MapPost("/api/messages/{subject}", async (
-    string subject,
-    PublishRequest request,
-    NatsService nats,
-    ILogger<Program> logger) =>
-{
-    try
-    {
-        logger.LogInformation("Publishing message to subject: {Subject}", subject);
-        var response = await nats.PublishAsync(subject, request);
-        return Results.Ok(response);
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Failed to publish message to {Subject}", subject);
-        return Results.Problem(
-            title: "Publish failed",
-            detail: ex.Message,
-            statusCode: 500
-        );
-    }
-})
-.WithName("PublishMessage")
-.WithTags("Messages")
-.WithOpenApi(operation =>
-{
-    operation.Summary = "Publish a message to a NATS subject";
-    operation.Description = "Publishes a message to the specified NATS subject via JetStream. The stream will be auto-created if it doesn't exist.";
-    return operation;
-});
-
-// GET /api/messages/{subject} - Fetch last N messages
-app.MapGet("/api/messages/{subject}", async (
-    string subject,
-    int limit,
-    NatsService nats,
-    ILogger<Program> logger) =>
-{
-    try
-    {
-        if (limit < 1 || limit > 100)
-        {
-            return Results.BadRequest(new { error = "Limit must be between 1 and 100" });
-        }
-
-        logger.LogInformation("Fetching {Limit} messages from subject: {Subject}", limit, subject);
-        var response = await nats.FetchMessagesAsync(subject, limit);
-        return Results.Ok(response);
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Failed to fetch messages from {Subject}", subject);
-        return Results.Problem(
-            title: "Fetch failed",
-            detail: ex.Message,
-            statusCode: 500
-        );
-    }
-})
-.WithName("FetchMessages")
-.WithTags("Messages")
-.WithOpenApi(operation =>
-{
-    operation.Summary = "Fetch messages from a NATS subject";
-    operation.Description = "Retrieves the last N messages from the specified NATS subject. This is a stateless operation using ephemeral consumers.";
-    return operation;
-});
-
-// GET /api/streams - List all JetStream streams
-app.MapGet("/api/streams", async (
-    NatsService nats,
-    ILogger<Program> logger) =>
-{
-    try
-    {
-        logger.LogInformation("Listing all JetStream streams");
-        var streams = await nats.ListStreamsAsync();
-        return Results.Ok(new StreamListResponse
-        {
-            Count = streams.Count,
-            Streams = streams
-        });
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Failed to list streams");
-        return Results.Problem(
-            title: "Failed to list streams",
-            detail: ex.Message,
-            statusCode: 500
-        );
-    }
-})
-.WithName("ListStreams")
-.WithTags("Streams")
-.WithOpenApi(operation =>
-{
-    operation.Summary = "List all JetStream streams";
-    operation.Description = "Returns information about all JetStream streams including message counts, subjects, and consumer counts.";
-    return operation;
-});
-
-// GET /api/streams/{name} - Get specific stream info
-app.MapGet("/api/streams/{name}", async (
-    string name,
-    NatsService nats,
-    ILogger<Program> logger) =>
-{
-    try
-    {
-        logger.LogInformation("Getting info for stream: {Stream}", name);
-        var stream = await nats.GetStreamInfoAsync(name);
-        return Results.Ok(stream);
-    }
-    catch (NatsJSApiException ex) when (ex.Error.Code == 404)
-    {
-        logger.LogWarning("Stream not found: {Stream}", name);
-        return Results.NotFound(new { error = $"Stream '{name}' not found" });
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Failed to get stream info for {Stream}", name);
-        return Results.Problem(
-            title: "Failed to get stream info",
-            detail: ex.Message,
-            statusCode: 500
-        );
-    }
-})
-.WithName("GetStream")
-.WithTags("Streams")
-.WithOpenApi(operation =>
-{
-    operation.Summary = "Get information about a specific stream";
-    operation.Description = "Returns detailed information about a specific JetStream stream including message counts, sequence numbers, and consumer count.";
-    return operation;
-});
-
-// GET /api/streams/{name}/subjects - Get all subjects in a stream
-app.MapGet("/api/streams/{name}/subjects", async (
-    string name,
-    NatsService nats,
-    ILogger<Program> logger) =>
-{
-    try
-    {
-        logger.LogInformation("Getting subjects for stream: {Stream}", name);
-        var subjects = await nats.GetStreamSubjectsAsync(name);
-        return Results.Ok(subjects);
-    }
-    catch (NatsJSApiException ex) when (ex.Error.Code == 404)
-    {
-        logger.LogWarning("Stream not found: {Stream}", name);
-        return Results.NotFound(new { error = $"Stream '{name}' not found" });
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Failed to get subjects for stream {Stream}", name);
-        return Results.Problem(
-            title: "Failed to get stream subjects",
-            detail: ex.Message,
-            statusCode: 500
-        );
-    }
-})
-.WithName("GetStreamSubjects")
-.WithTags("Streams")
-.WithOpenApi(operation =>
-{
-    operation.Summary = "Get all distinct subjects in a stream";
-    operation.Description = "Returns a list of all distinct subjects that have messages in the stream, along with message counts per subject. Results are ordered by message count (descending).";
-    return operation;
-});
+// Map controllers
+app.MapControllers();
 
 // Root endpoint
 app.MapGet("/", () => new
@@ -258,8 +77,6 @@ app.MapGet("/", () => new
         "GET /swagger - API documentation"
     }
 })
-.WithName("Root")
-.WithOpenApi()
 .ExcludeFromDescription();
 
 app.Logger.LogInformation("NATS HTTP Gateway starting on {Urls}", string.Join(", ", builder.WebHost.GetSetting("urls")?.Split(';') ?? new[] { "http://localhost:5000" }));

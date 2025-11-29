@@ -18,15 +18,23 @@ public class NatsService : IDisposable
     public NatsService(IConfiguration configuration, ILogger<NatsService> logger)
     {
         _logger = logger;
-        var natsUrl = configuration["NATS_URL"] ?? "nats://localhost:4222";
-        _defaultStreamPrefix = configuration["STREAM_PREFIX"] ?? "EVENTS";
+        try
+        {
+            var natsUrl = configuration["NATS_URL"] ?? "nats://localhost:4222";
+            _defaultStreamPrefix = configuration["STREAM_PREFIX"] ?? "EVENTS";
 
-        var opts = new NatsOpts { Url = natsUrl };
-        _nats = new NatsConnection(opts);
-        _nats.ConnectAsync().AsTask().Wait();
-        _js = new NatsJSContext(_nats);
+            var opts = new NatsOpts { Url = natsUrl };
+            _nats = new NatsConnection(opts);
+            _nats.ConnectAsync().AsTask().Wait();
+            _js = new NatsJSContext(_nats);
 
-        _logger.LogInformation("NATS Gateway connected to {NatsUrl}", natsUrl);
+            _logger.LogInformation("NATS Gateway connected to {NatsUrl}", natsUrl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to initialize NATS connection");
+            throw;
+        }
     }
 
     public bool IsConnected => _nats.ConnectionState == NatsConnectionState.Open;
