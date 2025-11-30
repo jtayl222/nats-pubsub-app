@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+option csharp_namespace = "NatsHttpGateway.Protos";
+
+package nats.messages;
+
+// Represents a message to be published to NATS
+message PublishMessage {
+  string message_id = 1;
+  string subject = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  string source = 4;
+  bytes data = 5; // Flexible data field (can contain JSON or other binary data)
+  map<string, string> metadata = 6; // Optional metadata/headers
+}
+
+// Response after publishing a message
+message PublishAck {
+  bool published = 1;
+  string subject = 2;
+  string stream = 3;
+  uint64 sequence = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// Request to fetch messages
+message FetchRequest {
+  string subject = 1;
+  int32 limit = 2;
+  uint64 start_sequence = 3; // Optional: start from specific sequence
+}
+
+// A single fetched message
+message FetchedMessage {
+  string subject = 1;
+  uint64 sequence = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  bytes data = 4;
+  int32 size_bytes = 5;
+  string stream = 6;
+}
+
+// Response containing multiple messages
+message FetchResponse {
+  string subject = 1;
+  int32 count = 2;
+  string stream = 3;
+  repeated FetchedMessage messages = 4;
+}
+
+// Example domain-specific message types
+message UserEvent {
+  string user_id = 1;
+  string event_type = 2; // created, updated, deleted
+  google.protobuf.Timestamp occurred_at = 3;
+  string email = 4;
+  map<string, string> attributes = 5;
+}
+
+message PaymentEvent {
+  string transaction_id = 1;
+  string status = 2; // approved, declined, pending
+  double amount = 3;
+  string currency = 4;
+  google.protobuf.Timestamp processed_at = 5;
+  string card_last_four = 6;
+}
+
+// Import for Timestamp
+import "google/protobuf/timestamp.proto";
