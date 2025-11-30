@@ -21,7 +21,7 @@ public class NatsService : INatsService, IDisposable
         try
         {
             var natsUrl = configuration["NATS_URL"] ?? "nats://localhost:4222";
-            _defaultStreamPrefix = configuration["STREAM_PREFIX"] ?? "EVENTS";
+            _defaultStreamPrefix = configuration["STREAM_PREFIX"] ?? "events";
 
             var opts = new NatsOpts { Url = natsUrl };
             _nats = new NatsConnection(opts);
@@ -230,12 +230,13 @@ public class NatsService : INatsService, IDisposable
     }
 
     /// <summary>
-    /// Determines stream name from subject (e.g., "events.test" -> "EVENTS")
+    /// Determines stream name from subject (e.g., "events.test" -> "events")
+    /// Preserves the original case from the subject to match existing streams
     /// </summary>
     private string DetermineStreamName(string subject)
     {
         var parts = subject.Split('.');
-        return parts.Length > 0 ? parts[0].ToUpperInvariant() : _defaultStreamPrefix;
+        return parts.Length > 0 ? parts[0] : _defaultStreamPrefix;
     }
 
     /// <summary>

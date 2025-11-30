@@ -37,7 +37,7 @@ public class MessagesControllerTests
         {
             Published = true,
             Subject = subject,
-            Stream = "TEST",
+            Stream = "test",
             Sequence = 1,
             Timestamp = DateTime.UtcNow
         };
@@ -56,7 +56,7 @@ public class MessagesControllerTests
         Assert.That(response, Is.Not.Null);
         Assert.That(response!.Published, Is.True);
         Assert.That(response.Subject, Is.EqualTo(subject));
-        Assert.That(response.Stream, Is.EqualTo("TEST"));
+        Assert.That(response.Stream, Is.EqualTo("test"));
     }
 
     [Test]
@@ -88,7 +88,7 @@ public class MessagesControllerTests
         {
             Subject = subject,
             Count = 2,
-            Stream = "TEST",
+            Stream = "test",
             Messages = new List<MessageResponse>
             {
                 new() { Subject = subject, Sequence = 1 },

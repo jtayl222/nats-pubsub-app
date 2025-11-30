@@ -54,7 +54,7 @@ public class ProtobufMessagesControllerTests
         {
             Published = true,
             Subject = subject,
-            Stream = "EVENTS",
+            Stream = "events",
             Sequence = 1,
             Timestamp = DateTime.UtcNow
         };
@@ -80,7 +80,7 @@ public class ProtobufMessagesControllerTests
         var ack = PublishAck.Parser.ParseFrom(result.FileContents);
         Assert.That(ack.Published, Is.True);
         Assert.That(ack.Subject, Is.EqualTo(subject));
-        Assert.That(ack.Stream, Is.EqualTo("EVENTS"));
+        Assert.That(ack.Stream, Is.EqualTo("events"));
         Assert.That(ack.Sequence, Is.EqualTo(1UL));
     }
 
@@ -159,7 +159,7 @@ public class ProtobufMessagesControllerTests
         {
             Subject = subject,
             Count = 2,
-            Stream = "EVENTS",
+            Stream = "events",
             Messages = new List<MessageResponse>
             {
                 new() { Subject = subject, Sequence = 1, Data = new { msg = "test1" }, SizeBytes = 50 },
@@ -182,7 +182,7 @@ public class ProtobufMessagesControllerTests
         var protoResponse = FetchResponse.Parser.ParseFrom(result.FileContents);
         Assert.That(protoResponse.Subject, Is.EqualTo(subject));
         Assert.That(protoResponse.Count, Is.EqualTo(2));
-        Assert.That(protoResponse.Stream, Is.EqualTo("EVENTS"));
+        Assert.That(protoResponse.Stream, Is.EqualTo("events"));
         Assert.That(protoResponse.Messages, Has.Count.EqualTo(2));
     }
 
@@ -247,7 +247,7 @@ public class ProtobufMessagesControllerTests
         {
             Subject = subject,
             Count = 0,
-            Stream = "EVENTS",
+            Stream = "events",
             Messages = new List<MessageResponse>()
         };
 
@@ -285,7 +285,7 @@ public class ProtobufMessagesControllerTests
         {
             Published = true,
             Subject = subject,
-            Stream = "EVENTS",
+            Stream = "events",
             Sequence = 5,
             Timestamp = DateTime.UtcNow
         };
@@ -307,7 +307,7 @@ public class ProtobufMessagesControllerTests
 
         var ack = PublishAck.Parser.ParseFrom(result.FileContents);
         Assert.That(ack.Published, Is.True);
-        Assert.That(ack.Stream, Is.EqualTo("EVENTS"));
+        Assert.That(ack.Stream, Is.EqualTo("events"));
         Assert.That(ack.Sequence, Is.EqualTo(5UL));
     }
 
@@ -361,7 +361,7 @@ public class ProtobufMessagesControllerTests
         {
             Published = true,
             Subject = subject,
-            Stream = "PAYMENTS",
+            Stream = "payments",
             Sequence = 10,
             Timestamp = DateTime.UtcNow
         };
@@ -383,7 +383,7 @@ public class ProtobufMessagesControllerTests
 
         var ack = PublishAck.Parser.ParseFrom(result.FileContents);
         Assert.That(ack.Published, Is.True);
-        Assert.That(ack.Stream, Is.EqualTo("PAYMENTS"));
+        Assert.That(ack.Stream, Is.EqualTo("payments"));
         Assert.That(ack.Sequence, Is.EqualTo(10UL));
     }
 
@@ -434,7 +434,7 @@ public class ProtobufMessagesControllerTests
         {
             Published = true,
             Subject = subject,
-            Stream = "EVENTS",
+            Stream = "events",
             Sequence = 1,
             Timestamp = DateTime.UtcNow
         };
@@ -465,7 +465,7 @@ public class ProtobufMessagesControllerTests
         {
             Subject = subject,
             Count = 0,
-            Stream = "EVENTS",
+            Stream = "events",
             Messages = new List<MessageResponse>()
         };
 
