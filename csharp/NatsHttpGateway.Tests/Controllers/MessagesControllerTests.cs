@@ -97,7 +97,7 @@ public class MessagesControllerTests
         };
 
         _mockNatsService
-            .Setup(s => s.FetchMessagesAsync(subject, limit))
+            .Setup(s => s.FetchMessagesAsync(subject, limit, It.IsAny<int>()))
             .ReturnsAsync(expectedResponse);
 
         // Act
@@ -125,7 +125,7 @@ public class MessagesControllerTests
         // Assert
         Assert.That(result, Is.Not.Null);
         Assert.That(result!.StatusCode, Is.EqualTo(400));
-        _mockNatsService.Verify(s => s.FetchMessagesAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        _mockNatsService.Verify(s => s.FetchMessagesAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
     }
 
     [Test]
@@ -141,7 +141,7 @@ public class MessagesControllerTests
         // Assert
         Assert.That(result, Is.Not.Null);
         Assert.That(result!.StatusCode, Is.EqualTo(400));
-        _mockNatsService.Verify(s => s.FetchMessagesAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        _mockNatsService.Verify(s => s.FetchMessagesAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
     }
 
     [Test]
@@ -152,7 +152,7 @@ public class MessagesControllerTests
         var limit = 10;
 
         _mockNatsService
-            .Setup(s => s.FetchMessagesAsync(subject, limit))
+            .Setup(s => s.FetchMessagesAsync(subject, limit, It.IsAny<int>()))
             .ThrowsAsync(new Exception("Stream not available"));
 
         // Act

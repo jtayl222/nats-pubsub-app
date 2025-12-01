@@ -88,14 +88,14 @@ public class NatsService : INatsService, IDisposable
     }
 
     /// <summary>
-    /// Fetches the last N messages from a subject (stateless)
+    /// Fetches the last N messages from a subject using an ephemeral consumer (stateless)
     /// </summary>
-    public async Task<FetchMessagesResponse> FetchMessagesAsync(string subject, int limit = 10)
+    public async Task<FetchMessagesResponse> FetchMessagesAsync(string subjectFilter, int limit = 10, int timeoutSeconds = 5)
     {
         try
         {
-            // Get or create stream for this subject
-            var streamName = await EnsureStreamExistsAsync(subject);
+            // Get or create stream for this subject filter
+            var streamName = await EnsureStreamExistsAsync(subjectFilter);
 
             // Get stream info to find the last sequence number
             var streamInfo = await _js.GetStreamAsync(streamName);
@@ -115,7 +115,7 @@ public class NatsService : INatsService, IDisposable
                 Name = $"http-fetch-{Guid.NewGuid()}",
                 DeliverPolicy = ConsumerConfigDeliverPolicy.ByStartSequence,
                 OptStartSeq = startSeq,
-                FilterSubject = subject,
+                FilterSubject = subjectFilter,
                 AckPolicy = ConsumerConfigAckPolicy.None,
                 InactiveThreshold = TimeSpan.FromSeconds(5)
             };
@@ -123,12 +123,12 @@ public class NatsService : INatsService, IDisposable
             var consumer = await _js.CreateConsumerAsync(streamName, consumerConfig);
 
             var messages = new List<MessageResponse>();
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
 
             try
             {
                 await foreach (var msg in consumer.FetchAsync<byte[]>(
-                    opts: new NatsJSFetchOpts { MaxMsgs = limit, Expires = TimeSpan.FromSeconds(5) },
+                    opts: new NatsJSFetchOpts { MaxMsgs = limit, Expires = TimeSpan.FromSeconds(timeoutSeconds) },
                     cancellationToken: cts.Token))
                 {
                     if (msg.Data != null)
@@ -165,11 +165,11 @@ public class NatsService : INatsService, IDisposable
                 // Ignore cleanup errors
             }
 
-            _logger.LogInformation("Fetched {Count} messages from {Subject}", messages.Count, subject);
+            _logger.LogInformation("Fetched {Count} messages from {SubjectFilter}", messages.Count, subjectFilter);
 
             return new FetchMessagesResponse
             {
-                Subject = subject,
+                Subject = subjectFilter,
                 Count = messages.Count,
                 Messages = messages,
                 Stream = streamName
@@ -177,7 +177,83 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch messages from {Subject}", subject);
+            _logger.LogError(ex, "Failed to fetch messages from {SubjectFilter}", subjectFilter);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Fetches messages from a stream using a durable (well-known) consumer
+    /// </summary>
+    public async Task<FetchMessagesResponse> FetchMessagesFromConsumerAsync(string streamName, string consumerName, int limit = 10, int timeoutSeconds = 5)
+    {
+        try
+        {
+            _logger.LogInformation("Fetching {Limit} messages from stream {Stream} using consumer {ConsumerName}",
+                limit, streamName, consumerName);
+
+            // Get the existing durable consumer
+            INatsJSConsumer consumer;
+            try
+            {
+                consumer = await _js.GetConsumerAsync(streamName, consumerName);
+            }
+            catch (NatsJSApiException ex) when (ex.Error.Code == 404)
+            {
+                _logger.LogError("Consumer {ConsumerName} not found in stream {StreamName}", consumerName, streamName);
+                throw new InvalidOperationException(
+                    $"Consumer '{consumerName}' does not exist in stream '{streamName}'. " +
+                    $"Please create the consumer first using the NATS CLI or management API.");
+            }
+
+            var messages = new List<MessageResponse>();
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+
+            try
+            {
+                await foreach (var msg in consumer.FetchAsync<byte[]>(
+                    opts: new NatsJSFetchOpts { MaxMsgs = limit, Expires = TimeSpan.FromSeconds(timeoutSeconds) },
+                    cancellationToken: cts.Token))
+                {
+                    if (msg.Data != null)
+                    {
+                        var json = Encoding.UTF8.GetString(msg.Data);
+                        var data = JsonSerializer.Deserialize<object>(json);
+
+                        messages.Add(new MessageResponse
+                        {
+                            Subject = msg.Subject,
+                            Sequence = msg.Metadata?.Sequence.Stream,
+                            Timestamp = msg.Metadata?.Timestamp.DateTime,
+                            Data = data,
+                            SizeBytes = msg.Data.Length
+                        });
+                    }
+
+                    if (messages.Count >= limit)
+                        break;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Timeout is expected if fewer than limit messages exist
+            }
+
+            _logger.LogInformation("Fetched {Count} messages from consumer {ConsumerName} in stream {Stream}",
+                messages.Count, consumerName, streamName);
+
+            return new FetchMessagesResponse
+            {
+                Subject = string.Empty, // Subject filtering is configured in the consumer
+                Count = messages.Count,
+                Messages = messages,
+                Stream = streamName
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch messages from consumer {ConsumerName} in stream {Stream}",
+                consumerName, streamName);
             throw;
         }
     }

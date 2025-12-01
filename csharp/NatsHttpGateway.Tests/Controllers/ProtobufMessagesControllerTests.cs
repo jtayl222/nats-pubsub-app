@@ -168,7 +168,7 @@ public class ProtobufMessagesControllerTests
         };
 
         _mockNatsService
-            .Setup(s => s.FetchMessagesAsync(subject, limit))
+            .Setup(s => s.FetchMessagesAsync(subject, limit, It.IsAny<int>()))
             .ReturnsAsync(fetchResponse);
 
         // Act
@@ -199,7 +199,7 @@ public class ProtobufMessagesControllerTests
         // Assert
         Assert.That(result, Is.Not.Null);
         Assert.That(result!.StatusCode, Is.EqualTo(400));
-        _mockNatsService.Verify(s => s.FetchMessagesAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        _mockNatsService.Verify(s => s.FetchMessagesAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
     }
 
     [Test]
@@ -215,7 +215,7 @@ public class ProtobufMessagesControllerTests
         // Assert
         Assert.That(result, Is.Not.Null);
         Assert.That(result!.StatusCode, Is.EqualTo(400));
-        _mockNatsService.Verify(s => s.FetchMessagesAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        _mockNatsService.Verify(s => s.FetchMessagesAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
     }
 
     [Test]
@@ -226,7 +226,7 @@ public class ProtobufMessagesControllerTests
         var limit = 10;
 
         _mockNatsService
-            .Setup(s => s.FetchMessagesAsync(subject, limit))
+            .Setup(s => s.FetchMessagesAsync(subject, limit, It.IsAny<int>()))
             .ThrowsAsync(new Exception("Stream not available"));
 
         // Act
@@ -252,7 +252,7 @@ public class ProtobufMessagesControllerTests
         };
 
         _mockNatsService
-            .Setup(s => s.FetchMessagesAsync(subject, 10))
+            .Setup(s => s.FetchMessagesAsync(subject, 10, It.IsAny<int>()))
             .ReturnsAsync(fetchResponse);
 
         // Act
@@ -260,7 +260,7 @@ public class ProtobufMessagesControllerTests
 
         // Assert
         Assert.That(result, Is.Not.Null);
-        _mockNatsService.Verify(s => s.FetchMessagesAsync(subject, 10), Times.Once);
+        _mockNatsService.Verify(s => s.FetchMessagesAsync(subject, 10, It.IsAny<int>()), Times.Once);
     }
 
     #endregion
@@ -470,7 +470,7 @@ public class ProtobufMessagesControllerTests
         };
 
         _mockNatsService
-            .Setup(s => s.FetchMessagesAsync(subject, 10))
+            .Setup(s => s.FetchMessagesAsync(subject, 10, It.IsAny<int>()))
             .ReturnsAsync(fetchResponse);
 
         // Act
