@@ -16,4 +16,20 @@ public interface INatsService
     Task<List<StreamSummary>> ListStreamsAsync();
     Task<StreamSummary> GetStreamInfoAsync(string name);
     Task<StreamSubjectsResponse> GetStreamSubjectsAsync(string name);
+
+    // Consumer management
+    Task<ConsumerDetails> CreateConsumerAsync(string streamName, CreateConsumerRequest request);
+    Task<ConsumerListResult> ListConsumersAsync(string streamName);
+    Task<ConsumerDetails> GetConsumerInfoAsync(string streamName, string consumerName);
+    Task<ConsumerDeleteResult> DeleteConsumerAsync(string streamName, string consumerName);
+    Task<ConsumerHealthResponse> GetConsumerHealthAsync(string streamName, string consumerName);
+
+    // Advanced consumer operations
+    Task<ConsumerPeekMessagesResponse> PeekConsumerMessagesAsync(string streamName, string consumerName, int limit = 10);
+    Task<ConsumerResetResponse> ResetConsumerAsync(string streamName, string consumerName, ConsumerResetRequest request);
+    Task<ConsumerActionResponse> PauseConsumerAsync(string streamName, string consumerName);
+    Task<ConsumerActionResponse> ResumeConsumerAsync(string streamName, string consumerName);
+    Task<BulkCreateConsumersResponse> BulkCreateConsumersAsync(string streamName, BulkCreateConsumersRequest request);
+    Task<ConsumerMetricsHistoryResponse> GetConsumerMetricsHistoryAsync(string streamName, string consumerName, int samples = 10);
+    ConsumerTemplatesResponse GetConsumerTemplates();
 }

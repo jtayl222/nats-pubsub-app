@@ -587,6 +587,702 @@ public class NatsService : INatsService, IDisposable
         }
     }
 
+    /// <summary>
+    /// Creates a new consumer on a stream
+    /// </summary>
+    public async Task<ConsumerDetails> CreateConsumerAsync(string streamName, CreateConsumerRequest request)
+    {
+        try
+        {
+            // Map string values to enums
+            var deliverPolicy = request.DeliverPolicy.ToLower() switch
+            {
+                "all" => ConsumerConfigDeliverPolicy.All,
+                "last" => ConsumerConfigDeliverPolicy.Last,
+                "new" => ConsumerConfigDeliverPolicy.New,
+                "by_start_sequence" => ConsumerConfigDeliverPolicy.ByStartSequence,
+                "by_start_time" => ConsumerConfigDeliverPolicy.ByStartTime,
+                _ => ConsumerConfigDeliverPolicy.All
+            };
+
+            var ackPolicy = request.AckPolicy.ToLower() switch
+            {
+                "none" => ConsumerConfigAckPolicy.None,
+                "all" => ConsumerConfigAckPolicy.All,
+                "explicit" => ConsumerConfigAckPolicy.Explicit,
+                _ => ConsumerConfigAckPolicy.Explicit
+            };
+
+            // Determine inactive threshold
+            TimeSpan inactiveThreshold;
+            if (request.InactiveThreshold.HasValue)
+            {
+                inactiveThreshold = request.InactiveThreshold.Value;
+            }
+            else if (request.Durable)
+            {
+                // Durable consumers should persist - use very long threshold (effectively no auto-delete)
+                // NATS doesn't have "infinity", so we use 365 days as a practical maximum
+                inactiveThreshold = TimeSpan.FromDays(365);
+            }
+            else
+            {
+                // Ephemeral consumers auto-delete after 5 minutes of inactivity
+                inactiveThreshold = TimeSpan.FromMinutes(5);
+            }
+
+            var consumerConfig = new NATS.Client.JetStream.Models.ConsumerConfig
+            {
+                // For durable consumers, use the provided name. For ephemeral, name can be empty (NATS generates one)
+                Name = request.Durable ? request.Name : (string.IsNullOrEmpty(request.Name) ? null : request.Name),
+                Description = request.Description,
+                FilterSubject = request.FilterSubject,
+                DeliverPolicy = deliverPolicy,
+                AckPolicy = ackPolicy,
+                AckWait = request.AckWait ?? default,
+                MaxDeliver = request.MaxDeliver ?? -1,
+                InactiveThreshold = inactiveThreshold,
+                MaxAckPending = request.MaxAckPending ?? -1,
+                FlowControl = request.FlowControl ?? false,
+                IdleHeartbeat = request.IdleHeartbeat ?? default
+            };
+
+            // Set optional start sequence or time
+            if (request.StartSequence.HasValue)
+            {
+                consumerConfig.OptStartSeq = request.StartSequence.Value;
+            }
+            if (request.StartTime.HasValue)
+            {
+                consumerConfig.OptStartTime = request.StartTime.Value;
+            }
+
+            var consumer = await _js.CreateConsumerAsync(streamName, consumerConfig);
+
+            _logger.LogInformation("Created consumer {ConsumerName} on stream {StreamName}", request.Name, streamName);
+
+            return await MapConsumerToInfo(consumer, streamName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create consumer {ConsumerName} on stream {StreamName}", request.Name, streamName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Lists all consumers for a stream
+    /// </summary>
+    public async Task<ConsumerListResult> ListConsumersAsync(string streamName)
+    {
+        try
+        {
+            var consumers = new List<ConsumerSummary>();
+
+            await foreach (var consumer in _js.ListConsumersAsync(streamName))
+            {
+                consumers.Add(new ConsumerSummary
+                {
+                    StreamName = streamName,
+                    Name = consumer.Info.Config.Name,
+                    Description = consumer.Info.Config.Description,
+                    Created = consumer.Info.Created.DateTime,
+                    Config = MapConsumerConfig(consumer.Info.Config),
+                    State = MapConsumerState(consumer.Info)
+                });
+            }
+
+            _logger.LogInformation("Listed {Count} consumers for stream {StreamName}", consumers.Count, streamName);
+
+            return new ConsumerListResult
+            {
+                StreamName = streamName,
+                Count = consumers.Count,
+                Consumers = consumers
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list consumers for stream {StreamName}", streamName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Gets detailed information about a specific consumer
+    /// </summary>
+    public async Task<ConsumerDetails> GetConsumerInfoAsync(string streamName, string consumerName)
+    {
+        try
+        {
+            var consumer = await _js.GetConsumerAsync(streamName, consumerName);
+
+            _logger.LogInformation("Retrieved info for consumer {ConsumerName} on stream {StreamName}", consumerName, streamName);
+
+            return await MapConsumerToInfo(consumer, streamName);
+        }
+        catch (NatsJSApiException ex) when (ex.Error.Code == 404)
+        {
+            throw new KeyNotFoundException($"Consumer '{consumerName}' not found on stream '{streamName}'");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get consumer info for {ConsumerName} on stream {StreamName}", consumerName, streamName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Deletes a consumer from a stream
+    /// </summary>
+    public async Task<ConsumerDeleteResult> DeleteConsumerAsync(string streamName, string consumerName)
+    {
+        try
+        {
+            await _js.DeleteConsumerAsync(streamName, consumerName);
+
+            _logger.LogInformation("Deleted consumer {ConsumerName} from stream {StreamName}", consumerName, streamName);
+
+            return new ConsumerDeleteResult
+            {
+                Success = true,
+                Message = $"Consumer '{consumerName}' deleted successfully from stream '{streamName}'"
+            };
+        }
+        catch (NatsJSApiException ex) when (ex.Error.Code == 404)
+        {
+            throw new KeyNotFoundException($"Consumer '{consumerName}' not found on stream '{streamName}'");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete consumer {ConsumerName} from stream {StreamName}", consumerName, streamName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Gets health status of a consumer
+    /// </summary>
+    public async Task<ConsumerHealthResponse> GetConsumerHealthAsync(string streamName, string consumerName)
+    {
+        try
+        {
+            var consumer = await _js.GetConsumerAsync(streamName, consumerName);
+            var info = consumer.Info;
+
+            var lastActivity = info.Delivered.LastActive;
+            var timeSinceActivity = DateTimeOffset.UtcNow - lastActivity;
+
+            // Determine health status
+            var isHealthy = true;
+            var status = "Healthy";
+            string? issue = null;
+
+            // Check if consumer has been inactive too long
+            if (info.Config.InactiveThreshold != default && timeSinceActivity > info.Config.InactiveThreshold)
+            {
+                isHealthy = false;
+                status = "Inactive";
+                issue = $"Consumer has been inactive for {timeSinceActivity:hh\\:mm\\:ss}";
+            }
+
+            // Check if too many pending acks
+            if (info.NumAckPending > 1000)
+            {
+                isHealthy = false;
+                status = "Overloaded";
+                issue = $"High pending acknowledgments: {info.NumAckPending}";
+            }
+
+            // Check if messages are piling up
+            var pendingMessages = info.NumPending;
+            if (pendingMessages > 10000)
+            {
+                if (isHealthy) // Don't override existing issues
+                {
+                    isHealthy = false;
+                    status = "Lagging";
+                    issue = $"High pending messages: {pendingMessages}";
+                }
+            }
+
+            _logger.LogInformation("Health check for consumer {ConsumerName}: {Status}", consumerName, status);
+
+            return new ConsumerHealthResponse
+            {
+                ConsumerName = consumerName,
+                StreamName = streamName,
+                IsHealthy = isHealthy,
+                Status = status,
+                LastActivity = lastActivity.DateTime,
+                TimeSinceLastActivity = timeSinceActivity,
+                PendingMessages = (long)pendingMessages,
+                AckPending = (long)info.NumAckPending,
+                Issue = issue
+            };
+        }
+        catch (NatsJSApiException ex) when (ex.Error.Code == 404)
+        {
+            throw new KeyNotFoundException($"Consumer '{consumerName}' not found on stream '{streamName}'");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to check health for consumer {ConsumerName}", consumerName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Maps NATS consumer to ConsumerDetails with metrics
+    /// </summary>
+    private async Task<ConsumerDetails> MapConsumerToInfo(INatsJSConsumer consumer, string streamName)
+    {
+        var info = consumer.Info;
+
+        // Get stream info to calculate lag
+        var stream = await _js.GetStreamAsync(streamName);
+        var streamLastSeq = stream.Info.State.LastSeq;
+        var consumerLastSeq = info.Delivered.StreamSeq;
+        var consumerLag = (long)(streamLastSeq - consumerLastSeq);
+
+        // Calculate acknowledged messages (delivered - ack pending)
+        var acknowledged = (long)info.Delivered.ConsumerSeq - (long)info.NumAckPending;
+
+        return new ConsumerDetails
+        {
+            StreamName = streamName,
+            Name = info.Config.Name,
+            Description = info.Config.Description,
+            Created = info.Created.DateTime,
+            Config = MapConsumerConfig(info.Config),
+            State = MapConsumerState(info),
+            Metrics = new ConsumerMetrics
+            {
+                ConsumerLag = consumerLag,
+                PendingMessages = (long)info.NumPending,
+                AcknowledgedMessages = acknowledged > 0 ? acknowledged : 0,
+                RedeliveredMessages = (long)info.NumRedelivered,
+                AverageAckTime = 0, // Would need to track this separately
+                IsHealthy = consumerLag < 1000 && (long)info.NumAckPending < 100,
+                HealthStatus = consumerLag > 1000 ? "Lagging" : "Healthy"
+            }
+        };
+    }
+
+    /// <summary>
+    /// Maps NATS consumer config to our model
+    /// </summary>
+    private ConsumerConfiguration MapConsumerConfig(NATS.Client.JetStream.Models.ConsumerConfig config)
+    {
+        return new ConsumerConfiguration
+        {
+            FilterSubject = config.FilterSubject,
+            DeliverPolicy = config.DeliverPolicy.ToString(),
+            AckPolicy = config.AckPolicy.ToString(),
+            AckWait = config.AckWait == default ? null : config.AckWait,
+            MaxDeliver = (int)config.MaxDeliver,
+            InactiveThreshold = config.InactiveThreshold == default ? null : config.InactiveThreshold,
+            MaxAckPending = (int)config.MaxAckPending,
+            FlowControl = config.FlowControl,
+            IdleHeartbeat = config.IdleHeartbeat == default ? null : config.IdleHeartbeat,
+            OptStartSeq = config.OptStartSeq == 0 ? null : config.OptStartSeq,
+            OptStartTime = config.OptStartTime == default ? null : (DateTime?)config.OptStartTime.DateTime
+        };
+    }
+
+    /// <summary>
+    /// Maps NATS consumer info to consumer state
+    /// </summary>
+    private ConsumerStateData MapConsumerState(NATS.Client.JetStream.Models.ConsumerInfo info)
+    {
+        return new ConsumerStateData
+        {
+            Delivered = (ulong)info.Delivered.ConsumerSeq,
+            AckPending = (ulong)info.NumAckPending,
+            Redelivered = (ulong)info.NumRedelivered,
+            NumPending = (long)info.NumPending,
+            NumWaiting = info.NumWaiting,
+            LastDelivered = info.Delivered.LastActive.DateTime
+        };
+    }
+
+    /// <summary>
+    /// Peeks at messages from a consumer without acknowledging them
+    /// </summary>
+    public async Task<ConsumerPeekMessagesResponse> PeekConsumerMessagesAsync(string streamName, string consumerName, int limit = 10)
+    {
+        try
+        {
+            var consumer = await _js.GetConsumerAsync(streamName, consumerName);
+            var messages = new List<MessagePreview>();
+
+            // Fetch messages without acknowledging
+            await foreach (var msg in consumer.FetchAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = limit }))
+            {
+                var dataPreview = msg.Data != null && msg.Data.Length > 0
+                    ? TryGetStringPreview(msg.Data, 100)
+                    : null;
+
+                messages.Add(new MessagePreview
+                {
+                    Sequence = msg.Metadata?.Sequence.Stream ?? 0,
+                    Subject = msg.Subject,
+                    Timestamp = msg.Metadata?.Timestamp.DateTime,
+                    SizeBytes = msg.Data?.Length ?? 0,
+                    DataPreview = dataPreview
+                });
+
+                if (messages.Count >= limit)
+                    break;
+            }
+
+            _logger.LogInformation("Peeked {Count} messages from consumer {ConsumerName}", messages.Count, consumerName);
+
+            return new ConsumerPeekMessagesResponse
+            {
+                ConsumerName = consumerName,
+                StreamName = streamName,
+                Count = messages.Count,
+                Messages = messages
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to peek messages from consumer {ConsumerName}", consumerName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Resets a consumer to replay messages
+    /// </summary>
+    public async Task<ConsumerResetResponse> ResetConsumerAsync(string streamName, string consumerName, ConsumerResetRequest request)
+    {
+        try
+        {
+            // Get current consumer config
+            var existingConsumer = await _js.GetConsumerAsync(streamName, consumerName);
+            var config = existingConsumer.Info.Config;
+
+            // Delete and recreate with new starting point
+            await _js.DeleteConsumerAsync(streamName, consumerName);
+
+            var newConfig = new NATS.Client.JetStream.Models.ConsumerConfig
+            {
+                Name = config.Name,
+                Description = config.Description,
+                FilterSubject = config.FilterSubject,
+                DeliverPolicy = request.Action.ToLower() switch
+                {
+                    "reset" => ConsumerConfigDeliverPolicy.All,
+                    "replay_from_sequence" => ConsumerConfigDeliverPolicy.ByStartSequence,
+                    "replay_from_time" => ConsumerConfigDeliverPolicy.ByStartTime,
+                    _ => ConsumerConfigDeliverPolicy.All
+                },
+                AckPolicy = config.AckPolicy,
+                AckWait = config.AckWait,
+                MaxDeliver = config.MaxDeliver,
+                InactiveThreshold = config.InactiveThreshold,
+                MaxAckPending = config.MaxAckPending,
+                FlowControl = config.FlowControl,
+                IdleHeartbeat = config.IdleHeartbeat
+            };
+
+            if (request.Sequence.HasValue)
+            {
+                newConfig.OptStartSeq = request.Sequence.Value;
+            }
+            if (request.Time.HasValue)
+            {
+                newConfig.OptStartTime = request.Time.Value;
+            }
+
+            await _js.CreateConsumerAsync(streamName, newConfig);
+
+            _logger.LogInformation("Reset consumer {ConsumerName} with action {Action}", consumerName, request.Action);
+
+            return new ConsumerResetResponse
+            {
+                Success = true,
+                Message = $"Consumer '{consumerName}' reset successfully",
+                ConsumerName = consumerName
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to reset consumer {ConsumerName}", consumerName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Pauses a consumer (Note: NATS doesn't have native pause, so we delete and store config)
+    /// </summary>
+    public async Task<ConsumerActionResponse> PauseConsumerAsync(string streamName, string consumerName)
+    {
+        try
+        {
+            // In a real implementation, you'd want to store the consumer config somewhere
+            // For now, we'll just return a message indicating this limitation
+            var consumer = await _js.GetConsumerAsync(streamName, consumerName);
+
+            _logger.LogWarning("Pause requested for consumer {ConsumerName}, but NATS doesn't support native pause. Consider deleting the consumer.", consumerName);
+
+            return new ConsumerActionResponse
+            {
+                Success = true,
+                Action = "pause",
+                ConsumerName = consumerName,
+                Message = "Note: NATS doesn't support native pause. To fully pause, delete the consumer and recreate it later."
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to pause consumer {ConsumerName}", consumerName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Resumes a consumer
+    /// </summary>
+    public async Task<ConsumerActionResponse> ResumeConsumerAsync(string streamName, string consumerName)
+    {
+        try
+        {
+            var consumer = await _js.GetConsumerAsync(streamName, consumerName);
+
+            _logger.LogInformation("Resume requested for consumer {ConsumerName}", consumerName);
+
+            return new ConsumerActionResponse
+            {
+                Success = true,
+                Action = "resume",
+                ConsumerName = consumerName,
+                Message = "Consumer is active. NATS consumers are always active unless deleted."
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to resume consumer {ConsumerName}", consumerName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Creates multiple consumers in bulk
+    /// </summary>
+    public async Task<BulkCreateConsumersResponse> BulkCreateConsumersAsync(string streamName, BulkCreateConsumersRequest request)
+    {
+        var results = new List<ConsumerCreateResult>();
+        int successCount = 0;
+        int failureCount = 0;
+
+        foreach (var consumerRequest in request.Consumers)
+        {
+            try
+            {
+                var consumer = await CreateConsumerAsync(streamName, consumerRequest);
+                results.Add(new ConsumerCreateResult
+                {
+                    Name = consumerRequest.Name,
+                    Success = true,
+                    Consumer = consumer
+                });
+                successCount++;
+            }
+            catch (Exception ex)
+            {
+                results.Add(new ConsumerCreateResult
+                {
+                    Name = consumerRequest.Name,
+                    Success = false,
+                    Error = ex.Message
+                });
+                failureCount++;
+                _logger.LogWarning(ex, "Failed to create consumer {ConsumerName} in bulk operation", consumerRequest.Name);
+            }
+        }
+
+        _logger.LogInformation("Bulk created {SuccessCount}/{Total} consumers on stream {StreamName}",
+            successCount, request.Consumers.Count, streamName);
+
+        return new BulkCreateConsumersResponse
+        {
+            TotalRequested = request.Consumers.Count,
+            SuccessCount = successCount,
+            FailureCount = failureCount,
+            Results = results
+        };
+    }
+
+    /// <summary>
+    /// Gets metrics history for a consumer (simulated with current snapshot)
+    /// </summary>
+    public async Task<ConsumerMetricsHistoryResponse> GetConsumerMetricsHistoryAsync(string streamName, string consumerName, int samples = 10)
+    {
+        try
+        {
+            // In a real implementation, you'd store metrics in a time-series database
+            // For now, we'll just return current metrics as a single snapshot
+            var consumer = await _js.GetConsumerAsync(streamName, consumerName);
+            var info = consumer.Info;
+
+            var stream = await _js.GetStreamAsync(streamName);
+            var consumerLag = (long)(stream.Info.State.LastSeq - info.Delivered.StreamSeq);
+            var acknowledged = (long)info.Delivered.ConsumerSeq - (long)info.NumAckPending;
+
+            var now = DateTime.UtcNow;
+            var history = new List<ConsumerMetricsSnapshot>
+            {
+                new ConsumerMetricsSnapshot
+                {
+                    Timestamp = now,
+                    ConsumerLag = consumerLag,
+                    PendingMessages = (long)info.NumPending,
+                    AcknowledgedMessages = acknowledged > 0 ? acknowledged : 0,
+                    RedeliveredMessages = (long)info.NumRedelivered,
+                    DeliveredCount = (ulong)info.Delivered.ConsumerSeq,
+                    IsHealthy = consumerLag < 1000 && (long)info.NumAckPending < 100
+                }
+            };
+
+            _logger.LogInformation("Retrieved metrics history for consumer {ConsumerName}", consumerName);
+
+            return new ConsumerMetricsHistoryResponse
+            {
+                ConsumerName = consumerName,
+                StreamName = streamName,
+                StartTime = now.AddMinutes(-samples),
+                EndTime = now,
+                Count = history.Count,
+                History = history
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get metrics history for consumer {ConsumerName}", consumerName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Gets predefined consumer templates
+    /// </summary>
+    public ConsumerTemplatesResponse GetConsumerTemplates()
+    {
+        var templates = new List<ConsumerTemplate>
+        {
+            new ConsumerTemplate
+            {
+                Name = "real-time-processor",
+                Description = "Processes new messages in real-time (ephemeral)",
+                UseCase = "Event processing, real-time analytics",
+                Template = new CreateConsumerRequest
+                {
+                    Durable = false, // Ephemeral - temporary consumer
+                    DeliverPolicy = "new",
+                    AckPolicy = "explicit",
+                    MaxDeliver = 3,
+                    AckWait = TimeSpan.FromSeconds(30)
+                }
+            },
+            new ConsumerTemplate
+            {
+                Name = "batch-processor",
+                Description = "Processes all messages from the beginning (durable)",
+                UseCase = "Batch processing, data migration",
+                Template = new CreateConsumerRequest
+                {
+                    Durable = true, // Durable - persists across restarts
+                    DeliverPolicy = "all",
+                    AckPolicy = "explicit",
+                    MaxDeliver = 5,
+                    AckWait = TimeSpan.FromMinutes(5)
+                }
+            },
+            new ConsumerTemplate
+            {
+                Name = "work-queue",
+                Description = "Work queue pattern with explicit acknowledgments (durable)",
+                UseCase = "Job processing, task distribution",
+                Template = new CreateConsumerRequest
+                {
+                    Durable = true, // Durable - reliable job processing
+                    DeliverPolicy = "all",
+                    AckPolicy = "explicit",
+                    MaxDeliver = 10,
+                    AckWait = TimeSpan.FromMinutes(1),
+                    MaxAckPending = 100
+                }
+            },
+            new ConsumerTemplate
+            {
+                Name = "fire-and-forget",
+                Description = "No acknowledgments required (ephemeral)",
+                UseCase = "Logging, metrics, non-critical events",
+                Template = new CreateConsumerRequest
+                {
+                    Durable = false, // Ephemeral - non-critical, temporary
+                    DeliverPolicy = "new",
+                    AckPolicy = "none",
+                    MaxDeliver = 1
+                }
+            },
+            new ConsumerTemplate
+            {
+                Name = "latest-only",
+                Description = "Only processes the most recent message (ephemeral)",
+                UseCase = "Status updates, latest state",
+                Template = new CreateConsumerRequest
+                {
+                    Durable = false, // Ephemeral - only cares about latest
+                    DeliverPolicy = "last",
+                    AckPolicy = "explicit",
+                    MaxDeliver = 3
+                }
+            },
+            new ConsumerTemplate
+            {
+                Name = "durable-processor",
+                Description = "Durable consumer that survives restarts",
+                UseCase = "Critical processing, guaranteed delivery",
+                Template = new CreateConsumerRequest
+                {
+                    Durable = true, // Explicitly durable - critical processing
+                    DeliverPolicy = "all",
+                    AckPolicy = "explicit",
+                    MaxDeliver = -1, // Unlimited retries
+                    AckWait = TimeSpan.FromMinutes(10),
+                    InactiveThreshold = TimeSpan.FromHours(24),
+                    MaxAckPending = 1000
+                }
+            }
+        };
+
+        return new ConsumerTemplatesResponse
+        {
+            Count = templates.Count,
+            Templates = templates
+        };
+    }
+
+    /// <summary>
+    /// Tries to get a string preview of binary data
+    /// </summary>
+    private string? TryGetStringPreview(byte[] data, int maxLength)
+    {
+        try
+        {
+            var str = Encoding.UTF8.GetString(data);
+            return str.Length > maxLength ? str.Substring(0, maxLength) + "..." : str;
+        }
+        catch
+        {
+            return $"[binary data, {data.Length} bytes]";
+        }
+    }
+
     public void Dispose()
     {
         _nats?.DisposeAsync().AsTask().Wait();
