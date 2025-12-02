@@ -5,10 +5,12 @@ HTTP/REST gateway for NATS JetStream messaging. Provides stateless HTTP endpoint
 ## Features
 
 - ✅ **RESTful API** - Standard HTTP/JSON interface
+- ✅ **WebSocket Streaming** - Real-time message subscription with protobuf frames
 - ✅ **JetStream Integration** - Persistent message storage and replay
 - ✅ **Auto-Stream Creation** - Streams are created automatically
 - ✅ **Stateless Design** - Scales horizontally without session management
 - ✅ **Dynamic Subjects** - Publish/fetch from any subject via URL
+- ✅ **Durable Consumers** - Support for both ephemeral and durable consumers
 - ✅ **Swagger/OpenAPI** - Interactive API documentation
 - ✅ **Health Checks** - Monitor NATS connectivity
 
@@ -130,6 +132,132 @@ curl http://localhost:8080/api/messages/payments.approved?limit=50
 
 ---
 
+### WebSocket Streaming (Real-time)
+
+Stream messages in real-time using WebSocket connections with protobuf binary frames.
+
+#### Stream from Ephemeral Consumer
+```
+WS /ws/websocketmessages/{subjectFilter}
+```
+
+Connects to an ephemeral consumer that streams new messages matching the subject filter.
+
+**Example (using wscat):**
+```bash
+# Install wscat if needed
+npm install -g wscat
+
+# Stream messages from events.> subject filter
+wscat -c "ws://localhost:8080/ws/websocketmessages/events.>"
+
+# Stream messages from specific subject
+wscat -c "ws://localhost:8080/ws/websocketmessages/events.test"
+```
+
+**Frame Format:**
+All messages are sent as protobuf binary frames (`WebSocketFrame` message type):
+
+```protobuf
+message WebSocketFrame {
+  FrameType type = 1;  // MESSAGE or CONTROL
+  oneof payload {
+    StreamMessage message = 2;  // NATS message data
+    ControlMessage control = 3;  // Control/status messages
+  }
+}
+```
+
+**Example Client (C#):**
+```csharp
+var ws = new ClientWebSocket();
+await ws.ConnectAsync(new Uri("ws://localhost:8080/ws/websocketmessages/events.>"), cts.Token);
+
+while (ws.State == WebSocketState.Open) {
+    var buffer = new byte[16384];
+    var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
+
+    var frameBytes = new byte[result.Count];
+    Array.Copy(buffer, frameBytes, result.Count);
+
+    var frame = WebSocketFrame.Parser.ParseFrom(frameBytes);
+    // Handle frame.Message or frame.Control
+}
+```
+
+**Example Client (Python):**
+```python
+import asyncio
+import websockets
+import message_pb2
+
+async with websockets.connect("ws://localhost:8080/ws/websocketmessages/events.>") as ws:
+    while True:
+        frame_bytes = await ws.recv()
+        frame = message_pb2.WebSocketFrame()
+        frame.ParseFromString(frame_bytes)
+        # Handle frame.message or frame.control
+```
+
+#### Stream from Durable Consumer
+```
+WS /ws/websocketmessages/{stream}/consumer/{consumerName}
+```
+
+Connects to a pre-configured durable consumer for persistent message tracking.
+
+**Prerequisites:**
+- Consumer must be created beforehand using NATS CLI or management API
+- Consumer configuration determines message delivery behavior
+
+**Example:**
+```bash
+# First, create a durable consumer
+nats consumer add EVENTS my-durable-consumer \
+  --filter events.> \
+  --deliver all \
+  --ack none
+
+# Then connect via WebSocket
+wscat -c "ws://localhost:8080/ws/websocketmessages/EVENTS/consumer/my-durable-consumer"
+```
+
+**Message Types:**
+
+Control messages (subscription acknowledgments, errors, keepalives):
+```json
+{
+  "type": "CONTROL",
+  "control": {
+    "type": "SUBSCRIBE_ACK",
+    "message": "Subscribed to events.>"
+  }
+}
+```
+
+Data messages (actual NATS messages):
+```json
+{
+  "type": "MESSAGE",
+  "message": {
+    "subject": "events.test",
+    "sequence": 42,
+    "timestamp": "2025-11-24T22:00:00.000Z",
+    "data": "{\"event_type\":\"test\",\"value\":123}",
+    "size_bytes": 156
+  }
+}
+```
+
+**See also:**
+- `Examples/WebSocketClientExample.cs` - Full C# client implementation
+- `Examples/websocket_client_example.py` - Full Python client implementation
+- `Examples/websocket_client_example.cpp` - Full C++ client implementation
+- `Examples/http_client_example.cpp` - C++ HTTP/REST client implementation
+- `Examples/README.md` - Complete guide for all examples
+
+---
+
 ### Swagger UI
 ```bash
 GET /swagger
@@ -232,7 +360,21 @@ Streams are auto-created based on subject naming:
 
 ## Use Cases
 
-### 1. Web Dashboard
+### 1. Real-time Dashboard
+
+```javascript
+// Stream live events via WebSocket
+const ws = new WebSocket('ws://gateway:8080/ws/websocketmessages/events.>');
+
+ws.onmessage = (event) => {
+  const frame = WebSocketFrame.decode(event.data);
+  if (frame.type === 'MESSAGE') {
+    displayEvent(frame.message);
+  }
+};
+```
+
+### 2. Web Dashboard (Polling)
 
 ```javascript
 // Fetch recent events for display
@@ -241,7 +383,7 @@ const { messages } = await response.json();
 messages.forEach(msg => displayEvent(msg));
 ```
 
-### 2. Webhook Integration
+### 3. Webhook Integration
 
 ```bash
 # Receive webhook, forward to NATS
@@ -250,7 +392,7 @@ curl -X POST http://gateway:8080/api/messages/webhooks.github \
   -d "$WEBHOOK_PAYLOAD"
 ```
 
-### 3. Mobile App Backend
+### 4. Mobile App Backend
 
 ```bash
 # Publish user action from mobile app
@@ -264,7 +406,7 @@ POST /api/messages/mobile.events
 }
 ```
 
-### 4. Legacy System Integration
+### 5. Legacy System Integration
 
 Add NATS messaging to systems that only support HTTP without code changes.
 
@@ -285,10 +427,10 @@ Add NATS messaging to systems that only support HTTP without code changes.
 - Add authentication/authorization for production use
 
 ### ❌ DON'T:
-- Don't poll frequently (use WebSocket or SSE for real-time)
+- Don't poll frequently (use WebSocket endpoints for real-time streaming)
 - Don't fetch all messages in one request (paginate)
 - Don't create streams manually (let gateway auto-create)
-- Don't use this for high-frequency streaming (use direct NATS client)
+- Don't use HTTP polling for high-frequency updates (use WebSocket or direct NATS client)
 
 ## Monitoring
 
@@ -363,10 +505,6 @@ builder.Services.AddRateLimiter(options => {
 
 app.UseRateLimiter();
 ```
-
-### Add Server-Sent Events (SSE)
-
-See documentation for SSE streaming endpoint implementation.
 
 ## Related Components
 

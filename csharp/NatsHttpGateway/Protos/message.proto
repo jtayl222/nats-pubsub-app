@@ -66,5 +66,51 @@ message PaymentEvent {
   string card_last_four = 6;
 }
 
+// WebSocket streaming message types
+
+// Type of WebSocket frame
+enum FrameType {
+  FRAME_TYPE_UNSPECIFIED = 0;
+  MESSAGE = 1;           // Data message from NATS
+  CONTROL = 2;           // Control message (error, close, keepalive)
+  SUBSCRIPTION_ACK = 3;  // Subscription confirmed
+}
+
+// Control message types
+enum ControlType {
+  CONTROL_TYPE_UNSPECIFIED = 0;
+  ERROR = 1;             // Error occurred
+  CLOSE = 2;             // Connection closing
+  KEEPALIVE = 3;         // Heartbeat/keepalive
+  SUBSCRIBE_ACK = 4;     // Subscription acknowledged
+}
+
+// A single streamed message from NATS
+message StreamMessage {
+  string subject = 1;
+  uint64 sequence = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  bytes data = 4;
+  int32 size_bytes = 5;
+  string stream = 6;
+  string consumer = 7; // Consumer name (for durable consumers)
+}
+
+// Control message for WebSocket connection management
+message ControlMessage {
+  ControlType type = 1;
+  string message = 2;
+  int32 code = 3; // Optional error code
+}
+
+// WebSocket frame wrapper
+message WebSocketFrame {
+  FrameType type = 1;
+  oneof payload {
+    StreamMessage message = 2;
+    ControlMessage control = 3;
+  }
+}
+
 // Import for Timestamp
 import "google/protobuf/timestamp.proto";

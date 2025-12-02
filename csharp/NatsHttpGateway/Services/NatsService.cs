@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using NATS.Client.Core;
@@ -259,6 +260,124 @@ public class NatsService : INatsService, IDisposable
     }
 
     /// <summary>
+    /// Streams messages from a subject using an ephemeral consumer (for WebSocket)
+    /// </summary>
+    public async IAsyncEnumerable<MessageResponse> StreamMessagesAsync(
+        string subjectFilter,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        INatsJSConsumer? consumer = null;
+        string? streamName = null;
+        string? consumerName = null;
+
+        try
+        {
+            // Get or create stream for this subject filter
+            streamName = await EnsureStreamExistsAsync(subjectFilter);
+
+            // Create ephemeral consumer for streaming
+            consumerName = $"ws-stream-{Guid.NewGuid()}";
+            var consumerConfig = new ConsumerConfig
+            {
+                Name = consumerName,
+                DeliverPolicy = ConsumerConfigDeliverPolicy.New, // Only new messages
+                FilterSubject = subjectFilter,
+                AckPolicy = ConsumerConfigAckPolicy.None,
+                InactiveThreshold = TimeSpan.FromMinutes(5)
+            };
+
+            consumer = await _js.CreateConsumerAsync(streamName, consumerConfig);
+
+            _logger.LogInformation("Started streaming from {SubjectFilter} using consumer {ConsumerName}",
+                subjectFilter, consumerName);
+
+            // Stream messages continuously
+            await foreach (var msg in consumer.ConsumeAsync<byte[]>(
+                opts: new NatsJSConsumeOpts(),
+                cancellationToken: cancellationToken))
+            {
+                if (msg.Data != null)
+                {
+                    var json = Encoding.UTF8.GetString(msg.Data);
+                    var data = JsonSerializer.Deserialize<object>(json);
+
+                    yield return new MessageResponse
+                    {
+                        Subject = msg.Subject,
+                        Sequence = msg.Metadata?.Sequence.Stream,
+                        Timestamp = msg.Metadata?.Timestamp.DateTime,
+                        Data = data,
+                        SizeBytes = msg.Data.Length
+                    };
+                }
+            }
+        }
+        finally
+        {
+            // Cleanup ephemeral consumer on disconnect
+            if (streamName != null && consumerName != null)
+            {
+                try
+                {
+                    await _js.DeleteConsumerAsync(streamName, consumerName);
+                    _logger.LogInformation("Deleted ephemeral consumer {ConsumerName}", consumerName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to cleanup consumer {ConsumerName}", consumerName);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Streams messages from a durable consumer (for WebSocket)
+    /// </summary>
+    public async IAsyncEnumerable<MessageResponse> StreamMessagesFromConsumerAsync(
+        string streamName,
+        string consumerName,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        // Get the existing durable consumer
+        INatsJSConsumer consumer;
+        try
+        {
+            consumer = await _js.GetConsumerAsync(streamName, consumerName);
+        }
+        catch (NatsJSApiException ex) when (ex.Error.Code == 404)
+        {
+            _logger.LogError("Consumer {ConsumerName} not found in stream {StreamName}", consumerName, streamName);
+            throw new InvalidOperationException(
+                $"Consumer '{consumerName}' does not exist in stream '{streamName}'. " +
+                $"Please create the consumer first using the NATS CLI or management API.");
+        }
+
+        _logger.LogInformation("Started streaming from consumer {ConsumerName} in stream {StreamName}",
+            consumerName, streamName);
+
+        // Stream messages continuously from durable consumer
+        await foreach (var msg in consumer.ConsumeAsync<byte[]>(
+            opts: new NatsJSConsumeOpts(),
+            cancellationToken: cancellationToken))
+        {
+            if (msg.Data != null)
+            {
+                var json = Encoding.UTF8.GetString(msg.Data);
+                var data = JsonSerializer.Deserialize<object>(json);
+
+                yield return new MessageResponse
+                {
+                    Subject = msg.Subject,
+                    Sequence = msg.Metadata?.Sequence.Stream,
+                    Timestamp = msg.Metadata?.Timestamp.DateTime,
+                    Data = data,
+                    SizeBytes = msg.Data.Length
+                };
+            }
+        }
+    }
+
+    /// <summary>
     /// Ensures a JetStream stream exists for the given subject
     /// </summary>
     private async Task<string> EnsureStreamExistsAsync(string subject)
@@ -306,13 +425,13 @@ public class NatsService : INatsService, IDisposable
     }
 
     /// <summary>
-    /// Determines stream name from subject (e.g., "events.test" -> "events")
-    /// Preserves the original case from the subject to match existing streams
+    /// Determines stream name from subject (e.g., "events.test" -> "EVENTS")
+    /// Converts to uppercase to match NATS convention
     /// </summary>
     private string DetermineStreamName(string subject)
     {
         var parts = subject.Split('.');
-        return parts.Length > 0 ? parts[0] : _defaultStreamPrefix;
+        return parts.Length > 0 ? parts[0].ToUpper() : _defaultStreamPrefix;
     }
 
     /// <summary>
@@ -376,7 +495,41 @@ public class NatsService : INatsService, IDisposable
                 Bytes = (ulong)stream.Info.State.Bytes,
                 FirstSeq = stream.Info.State.FirstSeq,
                 LastSeq = stream.Info.State.LastSeq,
-                Consumers = (int)stream.Info.State.ConsumerCount
+                Consumers = (int)stream.Info.State.ConsumerCount,
+
+                Configuration = new StreamConfigurationInfo
+                {
+                    Description = stream.Info.Config.Description,
+                    Replicas = stream.Info.Config.NumReplicas,
+                    Storage = stream.Info.Config.Storage.ToString(),
+                    Retention = stream.Info.Config.Retention.ToString(),
+                    Discard = stream.Info.Config.Discard.ToString(),
+                    NoAck = stream.Info.Config.NoAck,
+                    MaxAge = stream.Info.Config.MaxAge,
+                    MaxBytes = stream.Info.Config.MaxBytes,
+                    MaxMsgSize = stream.Info.Config.MaxMsgSize,
+                    MaxMsgs = stream.Info.Config.MaxMsgs,
+                    MaxConsumers = stream.Info.Config.MaxConsumers,
+                    MaxMsgsPerSubject = stream.Info.Config.MaxMsgsPerSubject,
+                    DuplicateWindow = stream.Info.Config.DuplicateWindow,
+                    AllowRollup = stream.Info.Config.AllowRollupHdrs,
+                    DenyDelete = stream.Info.Config.DenyDelete,
+                    DenyPurge = stream.Info.Config.DenyPurge,
+                    Sealed = stream.Info.Config.Sealed
+                },
+
+                State = new StreamStateInfo
+                {
+                    Messages = (ulong)stream.Info.State.Messages,
+                    Bytes = (ulong)stream.Info.State.Bytes,
+                    FirstSeq = stream.Info.State.FirstSeq,
+                    LastSeq = stream.Info.State.LastSeq,
+                    FirstTime = stream.Info.State.FirstTs,
+                    LastTime = stream.Info.State.LastTs,
+                    ConsumerCount = (int)stream.Info.State.ConsumerCount,
+                    NumSubjects = (long)stream.Info.State.NumSubjects,
+                    NumDeleted = (long)stream.Info.State.NumDeleted
+                }
             };
         }
         catch (Exception ex)

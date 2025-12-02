@@ -58,6 +58,13 @@ app.UseSwaggerUI();
 
 app.UseCors();
 
+// Enable WebSocket support
+var webSocketOptions = new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(120)
+};
+app.UseWebSockets(webSocketOptions);
+
 // Map controllers
 app.MapControllers();
 
@@ -70,7 +77,10 @@ app.MapGet("/", () => new
     {
         "GET /health - Health check",
         "POST /api/messages/{subject} - Publish message",
-        "GET /api/messages/{subject}?limit=10 - Fetch messages",
+        "GET /api/messages/{subjectFilter}?limit=10&timeout=5 - Fetch messages (ephemeral)",
+        "GET /api/messages/{stream}/consumer/{name}?limit=10&timeout=5 - Fetch messages (durable)",
+        "WS  /ws/websocketmessages/{subjectFilter} - Stream messages via WebSocket (ephemeral)",
+        "WS  /ws/websocketmessages/{stream}/consumer/{name} - Stream messages via WebSocket (durable)",
         "GET /api/streams - List all JetStream streams",
         "GET /api/streams/{name} - Get stream information",
         "GET /api/streams/{name}/subjects - List subjects in stream",
