@@ -10,6 +10,7 @@ Usage:
 """
 
 import sys
+import os
 import uuid
 from datetime import datetime
 import requests
@@ -26,7 +27,7 @@ except ImportError:
 class ProtobufClient:
     """Client for interacting with NatsHttpGateway protobuf endpoints"""
 
-    def __init__(self, base_url="http://localhost:8080"):
+    def __init__(self, base_url="http://localhost:5000"):
         self.base_url = base_url
         self.session = requests.Session()
 
@@ -186,7 +187,11 @@ class ProtobufClient:
 
 def main():
     """Main entry point"""
-    base_url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8080"
+    # Configuration priority: CLI arg > Environment variable > Default
+    base_url = (
+        sys.argv[1] if len(sys.argv) > 1
+        else os.getenv("NATS_GATEWAY_URL", "http://localhost:5000")
+    )
     client = ProtobufClient(base_url)
     client.run_all_examples()
 
