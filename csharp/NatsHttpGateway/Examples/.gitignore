@@ -1,0 +1,34 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+message_pb2.py
+
+# C++
+build/
+*.o
+*.a
+*.so
+*.dylib
+message.pb.cc
+message.pb.h
+http_client
+websocket_client
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
