@@ -13,10 +13,13 @@ public class ProtobufClientExample
     private readonly HttpClient _client;
     private readonly string _baseUrl;
 
-    public ProtobufClientExample(string baseUrl = "http://localhost:8080")
+    public ProtobufClientExample(string? baseUrl = null)
     {
-        _baseUrl = baseUrl;
-        _client = new HttpClient { BaseAddress = new Uri(baseUrl) };
+        // Configuration priority: Parameter > Environment variable > Default
+        _baseUrl = baseUrl
+            ?? Environment.GetEnvironmentVariable("NATS_GATEWAY_URL")
+            ?? "http://localhost:5000";
+        _client = new HttpClient { BaseAddress = new Uri(_baseUrl) };
     }
 
     /// <summary>
@@ -221,7 +224,10 @@ public class Program
 {
     public static async Task Main(string[] args)
     {
-        var baseUrl = args.Length > 0 ? args[0] : "http://localhost:8080";
+        // Configuration priority: CLI arg > Environment variable > Default
+        var baseUrl = args.Length > 0
+            ? args[0]
+            : Environment.GetEnvironmentVariable("NATS_GATEWAY_URL") ?? "http://localhost:5000";
         var client = new ProtobufClientExample(baseUrl);
 
         await client.RunAllExamples();
