@@ -311,6 +311,30 @@ docker-compose logs -f nats-http-gateway
 curl http://localhost:8080/health
 ```
 
+### Manual UAT Harness
+
+Validate the full consumer surface area (health, stream inspection, consumer CRUD, JSON + protobuf publish/fetch, peek/reset/delete) with the interactive Python script in `tests/consumer_uat.py`.
+
+1. **Install tooling**
+  ```bash
+  python -m pip install -r Examples/requirements.txt protobuf requests rich
+  ```
+2. **Generate protobuf stubs** (only if you plan to exercise the protobuf endpoints)
+  ```bash
+  python -m grpc_tools.protoc -I=Protos --python_out=Examples Protos/message.proto
+  ```
+3. **Override defaults** with environment variables when needed:
+  - `GATEWAY_BASE_URL` (default `http://localhost:8080`)
+  - `GATEWAY_STREAM`, `GATEWAY_SUBJECT`, `GATEWAY_CONSUMER`
+  - `GATEWAY_AUTO_ADVANCE=true` to skip the script's pause prompts for unattended runs
+4. **Run the script**
+  ```bash
+  python tests/consumer_uat.py
+  ```
+5. **Review artifacts** – Each execution writes `tests/consumer_uat_log.json` so you can archive the step-by-step transcript.
+
+Use this harness after local changes or before deployments to ensure the HTTP gateway still exercises every consumer endpoint correctly.
+
 ## Configuration
 
 ### Environment Variables
@@ -318,7 +342,7 @@ curl http://localhost:8080/health
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_URL` | `nats://localhost:4222` | NATS server connection URL |
-| `STREAM_PREFIX` | `EVENTS` | Default stream name prefix |
+| `STREAM_PREFIX` | `events` | Default stream name prefix |
 | `ASPNETCORE_URLS` | `http://+:8080` | HTTP listening URLs |
 
 ### Stream Naming Convention
@@ -327,12 +351,12 @@ Streams are auto-created based on subject naming:
 
 | Subject Pattern | Stream Name | Subject Filter |
 |----------------|-------------|----------------|
-| `events.test` | `EVENTS` | `events.>` |
-| `events.user.login` | `EVENTS` | `events.>` |
-| `payments.approved` | `PAYMENTS` | `payments.>` |
-| `orders.created` | `ORDERS` | `orders.>` |
+| `events.test` | `events` | `events.>` |
+| `events.user.login` | `events` | `events.>` |
+| `payments.approved` | `payments` | `payments.>` |
+| `orders.created` | `orders` | `orders.>` |
 
-**Rule:** First token of subject (before `.`) becomes uppercase stream name.
+**Rule:** The first token of the subject (before `.`) becomes the stream name and retains the caller's casing. Existing uppercase streams continue to work, but newly auto-created streams will match the subject's prefix case. Set `STREAM_PREFIX` if you need a different default.
 
 ## How It Works
 

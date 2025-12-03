@@ -220,6 +220,24 @@ response = requests.get(
 messages = response.json()
 ```
 
+## Smoke-Test the Gateway
+
+Run the repository's `tests/consumer_uat.py` script when you need an end-to-end check that covers health, stream introspection, consumer CRUD, JSON + protobuf publishing, and peek/reset/delete flows.
+
+```bash
+python -m pip install -r Examples/requirements.txt protobuf requests rich
+python -m grpc_tools.protoc -I=Protos --python_out=Examples Protos/message.proto  # once
+python tests/consumer_uat.py
+```
+
+Environment overrides:
+
+- `GATEWAY_BASE_URL` (default `http://localhost:8080`)
+- `GATEWAY_STREAM`, `GATEWAY_SUBJECT`, `GATEWAY_CONSUMER`
+- `GATEWAY_AUTO_ADVANCE=true` skips the interactive prompts for CI runs
+
+Each run produces `tests/consumer_uat_log.json`, which is handy to attach to change reviews.
+
 ## Environment Configuration
 
 ### Local Development

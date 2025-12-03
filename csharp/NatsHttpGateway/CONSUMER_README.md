@@ -9,10 +9,13 @@ This guide explains how to retrieve messages from NATS, the different paradigms 
 - [Mapping to Other Messaging Systems](#mapping-to-other-messaging-systems)
 - [Overview](#overview)
 - [GET Endpoint Comparison](#get-endpoint-comparison)
+- [Consumer Lifecycles](#consumer-lifecycles)
 - [Ephemeral Consumers](#ephemeral-consumers)
 - [Durable Consumers](#durable-consumers)
 - [Creating a Durable Consumer](#creating-a-durable-consumer)
+- [Consumer Templates](#consumer-templates)
 - [Use Cases](#use-cases)
+- [Hands-on UAT Script](#hands-on-uat-script)
 - [API Examples](#api-examples)
 
 ## Introduction: Getting Data from NATS
@@ -242,6 +245,42 @@ curl "http://localhost:8080/api/Messages/events/consumer/my-service-consumer?lim
 - Returns `404 Not Found` if the consumer doesn't exist
 - Error message includes instructions to create the consumer first
 
+## Consumer Lifecycles
+
+Visualize the two primary flows supported by the gateway to decide which runtime fits your workload.
+
+```
+Ephemeral Fetch (stateless)
+┌────────────┐   GET /api/messages/{subject}   ┌────────────┐
+│ HTTP Call  │────────────────────────────────▶│ Gateway    │
+└────────────┘                                  │ ┌───────┐ │
+  ▲                                        │ │Create │ │
+  │ response                               │ │Temp   │ │
+  │                                        │ │Consumer│ │
+  │                                        │ └─┬───┬─┘ │
+  │                                        │   │   │   │
+  │                                        │ Fetch  │  │
+  │                                        │ Delete │  │
+  ▼                                        └────────────┘
+```
+
+Steps: request arrives, gateway calculates a start sequence, creates a short-lived consumer, fetches the last *N* messages, returns them, and deletes the consumer immediately.
+
+```
+Durable Workflow (stateful)
+┌────────────┐   POST /api/consumers/{stream}   ┌────────────┐
+│ Provision  │────────────────────────────────▶│ Gateway    │
+└────────────┘                                  └────┬───────┘
+      (one-time)                     create durable
+
+┌────────────┐   GET /api/messages/{stream}/consumer/{name}
+│ Worker     │──────────────────────────────────────────────▶ maintains cursor
+└────────────┘   GET /api/consumers/{stream}/{name}/health   │
+                    │ monitor/reset/delete
+```
+
+Steps: provision (CLI/API/template or POST) the consumer, fetch repeatedly via the durable endpoint which advances the server-side cursor, monitor via `/health`, `/metrics/history`, peek/reset as needed, and delete once decommissioned.
+
 ## Ephemeral Consumers
 
 ### Characteristics
@@ -458,20 +497,64 @@ await js.CreateConsumerAsync("events", consumerConfig);
 Console.WriteLine("Consumer created successfully!");
 ```
 
-### Method 4: Using the NatsHttpGateway (Future Enhancement)
+### Method 4: Using the NatsHttpGateway (Built-in)
 
-Currently, the NatsHttpGateway does NOT provide an endpoint to create consumers. You must use one of the methods above.
+The gateway exposes a first-class `POST /api/consumers/{stream}` endpoint that accepts the `CreateConsumerRequest` contract shown in `Models/ConsumerModels.cs`.
 
-**Potential future enhancement:**
-```http
-POST /api/Consumers/{streamName}
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "my-service-consumer",
+        "description": "Processes order events",
+        "durable": true,
+        "filterSubject": "events.orders.*",
+        "deliverPolicy": "all",
+        "ackPolicy": "explicit",
+        "maxDeliver": 5,
+        "ackWait": "00:01:00"
+      }'
+```
+
+Pair this endpoint with [`GET /api/consumers/templates`](#consumer-templates) to bootstrap known-good configurations, then tweak per stream.
+
+## Consumer Templates
+
+Skip guesswork by starting from the curated templates baked into `NatsService`. Fetch them with:
+
+```bash
+curl http://localhost:8080/api/consumers/templates | jq .
+```
+
+Sample response excerpt:
+
+```json
 {
-  "name": "my-service-consumer",
-  "filterSubject": "events.test",
-  "deliverPolicy": "all",
-  "ackPolicy": "none"
+  "count": 6,
+  "templates": [
+    {
+      "name": "batch-processor",
+      "description": "Processes all messages from the beginning (durable)",
+      "useCase": "Batch processing, data migration",
+      "template": {
+        "durable": true,
+        "deliverPolicy": "all",
+        "ackPolicy": "explicit",
+        "maxDeliver": 5,
+        "ackWait": "00:05:00"
+      }
+    }
+  ]
 }
 ```
+
+To create a consumer from a template:
+
+1. `GET /api/consumers/templates` and copy the `template` payload that best matches your scenario (real-time processor, work queue, fire-and-forget, latest-only, durable-processor, etc.).
+2. Add stream-specific fields such as `filterSubject`, `name`, or `inactiveThreshold` if omitted.
+3. `POST /api/consumers/{stream}` with the merged body.
+
+Because templates are simple JSON, you can also check them into your infrastructure repo to keep runtime configuration auditable.
 
 ## Use Cases
 
@@ -498,6 +581,30 @@ POST /api/Consumers/{streamName}
 ✅ **Stateful services** - Need to remember position
 ✅ **Guaranteed delivery** - With ack policy and redelivery
 ✅ **Long-running tasks** - Process messages over hours/days
+
+## Hands-on UAT Script
+
+The repository ships with `tests/consumer_uat.py`, a guided Python harness that walks through health checks, stream verification, consumer CRUD, JSON + protobuf publishing, fetch/peek/reset, and cleanup.
+
+1. **Install dependencies** (once per machine):
+  ```bash
+  python -m pip install -r Examples/requirements.txt protobuf requests rich
+  ```
+2. **Generate protobuf stubs** if you plan to test binary routes:
+  ```bash
+  python -m grpc_tools.protoc -I=Protos --python_out=Examples Protos/message.proto
+  ```
+3. **Override defaults** via env vars as needed:
+  - `GATEWAY_BASE_URL` (default `http://localhost:8080`)
+  - `GATEWAY_STREAM`, `GATEWAY_SUBJECT`, `GATEWAY_CONSUMER`
+  - `GATEWAY_AUTO_ADVANCE=true` to skip interactive pauses (great for CI)
+4. **Run the script**:
+  ```bash
+  python tests/consumer_uat.py
+  ```
+5. **Review artifacts** – Each run writes `tests/consumer_uat_log.json`, capturing every request/response and the human expectation text for audit trails.
+
+Use this harness whenever you touch consumer-related code or infrastructure updates; it exercises the same endpoints described in this guide and catches regression risks early.
 
 **Example Scenarios:**
 - Payment processor consuming transaction events
