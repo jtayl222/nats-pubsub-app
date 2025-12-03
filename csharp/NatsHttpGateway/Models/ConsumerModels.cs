@@ -202,16 +202,6 @@ public class ConsumerDeleteResult
 }
 
 /// <summary>
-/// Request to purge/reset consumer
-/// </summary>
-public class ConsumerPurgeRequest
-{
-    public string Action { get; set; } = "reset"; // reset, replay_from_sequence, replay_from_time
-    public ulong? Sequence { get; set; }
-    public DateTime? Time { get; set; }
-}
-
-/// <summary>
 /// Consumer health check result
 /// </summary>
 public class ConsumerHealthResponse

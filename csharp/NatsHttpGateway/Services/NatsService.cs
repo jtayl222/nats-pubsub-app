@@ -419,13 +419,18 @@ public class NatsService : INatsService, IDisposable
     }
 
     /// <summary>
-    /// Determines stream name from subject (e.g., "events.test" -> "EVENTS")
-    /// Converts to uppercase to match NATS convention
+    /// Determines stream name from subject (e.g., "events.test" -> "events") while
+    /// preserving the caller's original casing.
     /// </summary>
     private string DetermineStreamName(string subject)
     {
-        var parts = subject.Split('.');
-        return parts.Length > 0 ? parts[0].ToUpper() : _defaultStreamPrefix;
+        if (string.IsNullOrWhiteSpace(subject))
+        {
+            return _defaultStreamPrefix;
+        }
+
+        var parts = subject.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 0 ? parts[0] : _defaultStreamPrefix;
     }
 
     /// <summary>
