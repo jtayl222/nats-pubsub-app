@@ -1,8 +1,12 @@
 # NATS JetStream Consumers Guide
 
-This guide explains the two different methods for fetching messages from NATS JetStream in the NatsHttpGateway, the differences between ephemeral and durable consumers, and when to use each approach.
+This guide explains how to retrieve messages from NATS, the different paradigms for data consumption, terminology mappings to other messaging systems, and the two different methods for fetching messages from NATS JetStream in the NatsHttpGateway.
 
 ## Table of Contents
+- [Introduction: Getting Data from NATS](#introduction-getting-data-from-nats)
+- [Core NATS vs JetStream](#core-nats-vs-jetstream)
+- [Terminology: Consumers vs Subscribers](#terminology-consumers-vs-subscribers)
+- [Mapping to Other Messaging Systems](#mapping-to-other-messaging-systems)
 - [Overview](#overview)
 - [GET Endpoint Comparison](#get-endpoint-comparison)
 - [Ephemeral Consumers](#ephemeral-consumers)
@@ -10,6 +14,148 @@ This guide explains the two different methods for fetching messages from NATS Je
 - [Creating a Durable Consumer](#creating-a-durable-consumer)
 - [Use Cases](#use-cases)
 - [API Examples](#api-examples)
+
+## Introduction: Getting Data from NATS
+
+NATS provides two distinct paradigms for consuming messages:
+
+1. **Core NATS (Basic Pub/Sub)** - Real-time, fire-and-forget messaging with no persistence
+2. **JetStream** - Stream-based messaging with persistence, replay, and delivery guarantees
+
+### When to Use Each Paradigm
+
+**Use Core NATS when:**
+- You need ultra-low latency (sub-millisecond)
+- Messages are ephemeral and don't need to be stored
+- You're building real-time systems (chat, live updates, telemetry)
+- Subscribers are always online
+- Message loss is acceptable
+
+**Use JetStream when:**
+- You need message persistence and durability
+- You want to replay historical messages
+- Consumers may be offline and need to catch up
+- You need delivery guarantees (at-least-once, exactly-once)
+- You're building event sourcing or audit trails
+
+**This gateway focuses on JetStream** because it provides HTTP access to persisted message streams, making it ideal for web applications and microservices that need reliable message delivery.
+
+## Core NATS vs JetStream
+
+### Core NATS (Subscribers)
+
+In Core NATS, clients create **subscribers** that receive messages in real-time as they're published:
+
+```
+Publisher → NATS Server → Subscriber (active connection)
+                      ↓
+                   (message lost if no subscriber)
+```
+
+**Characteristics:**
+- **No persistence** - Messages exist only in memory
+- **Push-based** - Server pushes messages to active subscribers immediately
+- **Fire-and-forget** - If no subscriber is listening, message is lost
+- **No replay** - Can't retrieve historical messages
+- **Stateless** - Server doesn't track delivery or acknowledgement
+
+**Core NATS is NOT available through this HTTP gateway** because HTTP is request/response based and can't maintain the persistent connections required for Core NATS subscriptions. For Core NATS, use native NATS client libraries with long-lived connections.
+
+### JetStream (Consumers)
+
+JetStream adds **streams** (message storage) and **consumers** (stateful message readers):
+
+```
+Publisher → NATS Stream (persistent) → Consumer (pulls messages)
+                    ↓
+            (messages stored on disk)
+```
+
+**Characteristics:**
+- **Persistent storage** - Messages stored on disk in streams
+- **Pull or push** - Consumers can pull messages or receive pushes
+- **Replay capable** - Can retrieve historical messages
+- **Stateful** - Tracks which messages have been delivered/acknowledged
+- **Delivery guarantees** - At-least-once or exactly-once semantics
+
+**JetStream is ideal for HTTP gateways** because it allows stateless HTTP requests to retrieve messages at any time, with full control over message delivery and acknowledgement.
+
+## Terminology: Consumers vs Subscribers
+
+NATS uses different terminology for its two paradigms:
+
+### Subscriber (Core NATS)
+A **subscriber** is a client connection that receives real-time messages on a subject:
+- Lightweight, stateless
+- Messages delivered immediately via push
+- No acknowledgement tracking
+- Connection-based (must be actively connected)
+- Example: `nats.Subscribe("events.*")`
+
+### Consumer (JetStream)
+A **consumer** is a durable, server-side entity that tracks message delivery:
+- Heavyweight, stateful
+- Messages pulled on-demand or pushed
+- Tracks acknowledgements and redelivery
+- Can be ephemeral (temporary) or durable (persistent)
+- Example: Create consumer, then fetch messages from it
+
+**Key difference:** A subscriber is just a client receiving messages. A consumer is a server-side object with configuration, state, and delivery tracking.
+
+## Mapping to Other Messaging Systems
+
+If you're familiar with Kafka or RabbitMQ, here's how NATS concepts map:
+
+### Kafka → NATS Mapping
+
+| Kafka Concept | NATS Equivalent | Notes |
+|---------------|-----------------|-------|
+| **Topic** | **Subject** (Core) or **Stream** (JetStream) | Stream is closer to Kafka topic with partitions |
+| **Partition** | **Stream** (no built-in partitioning) | NATS doesn't partition; use multiple streams/subjects |
+| **Consumer Group** | **Durable Consumer** (JetStream) | Both track offset/position |
+| **Consumer** | **Subscriber** (Core) or **Consumer** (JetStream) | JetStream consumer ≈ Kafka consumer |
+| **Offset** | **Sequence Number** | Both track message position in stream |
+| **Commit** | **Ack** (Acknowledgement) | Both confirm message processing |
+| **Compaction** | Not directly supported | Use subject-based filtering instead |
+| **Replication** | **Clustering/Replication** | Both support HA with replicas |
+
+**Key differences from Kafka:**
+- NATS subjects use wildcards (`events.*`, `events.>`) instead of topic prefixes
+- No built-in partitioning - scale horizontally with multiple streams/subjects
+- Lighter weight, lower latency
+- Simpler operational model (no Zookeeper/KRaft)
+
+### RabbitMQ → NATS Mapping
+
+| RabbitMQ Concept | NATS Equivalent | Notes |
+|------------------|-----------------|-------|
+| **Exchange** | **Subject hierarchy** | NATS uses subject patterns instead of exchanges |
+| **Queue** | **Consumer** (JetStream) | Both buffer messages for workers |
+| **Binding** | **FilterSubject** (consumer config) | Maps subjects to consumers |
+| **Consumer** | **Subscriber** (Core) or **Consumer** (JetStream) | Similar push/pull models |
+| **Acknowledgement** | **Ack** | Both confirm delivery |
+| **Dead Letter Queue** | Not built-in | Implement with max delivery + subject routing |
+| **TTL** | **MaxAge** (stream config) | Both expire old messages |
+| **Priority Queue** | Not supported | All messages equal priority |
+
+**Key differences from RabbitMQ:**
+- No exchange types (direct/topic/fanout) - all routing via subject patterns
+- Simpler model: publish to subjects, subscribe to subjects
+- No complex routing rules - use subject wildcards instead
+- Better performance for high-throughput scenarios
+
+### Summary Table
+
+| Feature | Core NATS | JetStream | Kafka | RabbitMQ |
+|---------|-----------|-----------|-------|----------|
+| **Persistence** | ❌ No | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Replay** | ❌ No | ✅ Yes | ✅ Yes | ❌ No |
+| **Delivery Guarantees** | At-most-once | At-least-once, exactly-once | At-least-once | At-least-once |
+| **Message Ordering** | Per-publisher | Per-stream | Per-partition | Per-queue |
+| **Consumer Groups** | ❌ No | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Latency** | Sub-ms | Low ms | Low ms | Low ms |
+| **Throughput** | Very High | High | Very High | Medium-High |
+| **Operational Complexity** | Very Low | Low | High | Medium |
 
 ## Overview
 

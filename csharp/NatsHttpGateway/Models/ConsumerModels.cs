@@ -280,47 +280,6 @@ public class ConsumerResetResponse
 }
 
 /// <summary>
-/// Response for pause/resume operations
-/// </summary>
-public class ConsumerActionResponse
-{
-    public bool Success { get; set; }
-    public string Action { get; set; } = string.Empty;
-    public string ConsumerName { get; set; } = string.Empty;
-    public string Message { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Request to create multiple consumers
-/// </summary>
-public class BulkCreateConsumersRequest
-{
-    public List<CreateConsumerRequest> Consumers { get; set; } = new();
-}
-
-/// <summary>
-/// Response for bulk create operation
-/// </summary>
-public class BulkCreateConsumersResponse
-{
-    public int TotalRequested { get; set; }
-    public int SuccessCount { get; set; }
-    public int FailureCount { get; set; }
-    public List<ConsumerCreateResult> Results { get; set; } = new();
-}
-
-/// <summary>
-/// Result of individual consumer creation
-/// </summary>
-public class ConsumerCreateResult
-{
-    public string Name { get; set; } = string.Empty;
-    public bool Success { get; set; }
-    public string? Error { get; set; }
-    public ConsumerDetails? Consumer { get; set; }
-}
-
-/// <summary>
 /// Consumer metrics history entry
 /// </summary>
 public class ConsumerMetricsSnapshot

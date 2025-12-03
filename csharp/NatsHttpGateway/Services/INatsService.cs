@@ -27,9 +27,6 @@ public interface INatsService
     // Advanced consumer operations
     Task<ConsumerPeekMessagesResponse> PeekConsumerMessagesAsync(string streamName, string consumerName, int limit = 10);
     Task<ConsumerResetResponse> ResetConsumerAsync(string streamName, string consumerName, ConsumerResetRequest request);
-    Task<ConsumerActionResponse> PauseConsumerAsync(string streamName, string consumerName);
-    Task<ConsumerActionResponse> ResumeConsumerAsync(string streamName, string consumerName);
-    Task<BulkCreateConsumersResponse> BulkCreateConsumersAsync(string streamName, BulkCreateConsumersRequest request);
     Task<ConsumerMetricsHistoryResponse> GetConsumerMetricsHistoryAsync(string streamName, string consumerName, int samples = 10);
     ConsumerTemplatesResponse GetConsumerTemplates();
 }

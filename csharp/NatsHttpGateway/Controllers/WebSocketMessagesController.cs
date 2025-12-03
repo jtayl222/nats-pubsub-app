@@ -34,7 +34,7 @@ public class WebSocketMessagesController : ControllerBase
         }
 
         using var webSocket = await HttpContext.WebSockets.AcceptWebSocketAsync();
-        var cts = new CancellationTokenSource();
+        using var cts = new CancellationTokenSource();
 
         try
         {
@@ -97,7 +97,7 @@ public class WebSocketMessagesController : ControllerBase
         }
 
         using var webSocket = await HttpContext.WebSockets.AcceptWebSocketAsync();
-        var cts = new CancellationTokenSource();
+        using var cts = new CancellationTokenSource();
 
         try
         {
@@ -135,7 +135,7 @@ public class WebSocketMessagesController : ControllerBase
         }
         finally
         {
-            cts.Cancel();
+            await cts.CancelAsync();
             _logger.LogInformation("WebSocket connection closed for consumer {ConsumerName}", consumerName);
 
             if (webSocket.State == WebSocketState.Open)
