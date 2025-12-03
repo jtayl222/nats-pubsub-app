@@ -71,7 +71,7 @@ public class WebSocketMessagesController : ControllerBase
         }
         finally
         {
-            cts.Cancel();
+            await cts.CancelAsync();
             _logger.LogInformation("WebSocket connection closed for {SubjectFilter}", subjectFilter);
 
             if (webSocket.State == WebSocketState.Open)

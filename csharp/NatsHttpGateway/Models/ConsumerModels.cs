@@ -1,23 +1,112 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel;
+
 namespace NatsHttpGateway.Models;
 
 /// <summary>
 /// Request to create a new consumer
 /// </summary>
+/// <example>
+/// {
+///   "name": "order-processor",
+///   "description": "Processes order events",
+///   "durable": true,
+///   "filterSubject": "events.orders.*",
+///   "deliverPolicy": "all",
+///   "ackPolicy": "explicit",
+///   "ackWait": "00:00:30",
+///   "maxDeliver": 3
+/// }
+/// </example>
 public class CreateConsumerRequest
 {
+    /// <summary>
+    /// Consumer name (required for durable consumers)
+    /// </summary>
+    /// <example>order-processor</example>
+    [Required(ErrorMessage = "Consumer name is required")]
+    [MinLength(1)]
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Human-readable description of the consumer
+    /// </summary>
+    /// <example>Processes order events from the events stream</example>
     public string? Description { get; set; }
-    public bool Durable { get; set; } = true; // true = durable (persistent), false = ephemeral (temporary)
+
+    /// <summary>
+    /// Whether the consumer is durable (persistent) or ephemeral (temporary). Durable consumers persist across restarts.
+    /// </summary>
+    /// <example>true</example>
+    [DefaultValue(true)]
+    public bool Durable { get; set; } = true;
+
+    /// <summary>
+    /// Filter messages by subject pattern (e.g., "events.orders.*" or "events.>")
+    /// </summary>
+    /// <example>events.orders.*</example>
     public string? FilterSubject { get; set; }
-    public string DeliverPolicy { get; set; } = "all"; // all, last, new, by_start_sequence, by_start_time
+
+    /// <summary>
+    /// Delivery policy: "all" (all messages), "last" (last message), "new" (new messages only), "by_start_sequence", "by_start_time"
+    /// </summary>
+    /// <example>all</example>
+    [DefaultValue("all")]
+    public string DeliverPolicy { get; set; } = "all";
+
+    /// <summary>
+    /// Starting sequence number (required if deliverPolicy is "by_start_sequence")
+    /// </summary>
+    /// <example>100</example>
     public ulong? StartSequence { get; set; }
+
+    /// <summary>
+    /// Starting time (required if deliverPolicy is "by_start_time")
+    /// </summary>
+    /// <example>2025-01-01T00:00:00Z</example>
     public DateTime? StartTime { get; set; }
-    public string AckPolicy { get; set; } = "explicit"; // none, all, explicit
+
+    /// <summary>
+    /// Acknowledgement policy: "none" (auto-ack), "all" (ack all), "explicit" (manual ack required)
+    /// </summary>
+    /// <example>explicit</example>
+    [DefaultValue("explicit")]
+    public string AckPolicy { get; set; } = "explicit";
+
+    /// <summary>
+    /// Time to wait for acknowledgement before redelivery. Format: "HH:MM:SS" or "d.HH:MM:SS" (e.g., "00:00:30" for 30 seconds)
+    /// </summary>
+    /// <example>00:00:30</example>
     public TimeSpan? AckWait { get; set; }
+
+    /// <summary>
+    /// Maximum number of delivery attempts before giving up (-1 for unlimited)
+    /// </summary>
+    /// <example>3</example>
     public int? MaxDeliver { get; set; }
+
+    /// <summary>
+    /// Time after which an inactive consumer is deleted. Format: "HH:MM:SS" or "d.HH:MM:SS". Defaults to 365 days for durable, 5 minutes for ephemeral.
+    /// </summary>
+    /// <example>1.00:00:00</example>
     public TimeSpan? InactiveThreshold { get; set; }
+
+    /// <summary>
+    /// Maximum pending acknowledgements allowed before pausing delivery
+    /// </summary>
+    /// <example>1000</example>
     public int? MaxAckPending { get; set; }
+
+    /// <summary>
+    /// Enable flow control for backpressure management
+    /// </summary>
+    /// <example>false</example>
     public bool? FlowControl { get; set; }
+
+    /// <summary>
+    /// Idle heartbeat interval. Format: "HH:MM:SS" (e.g., "00:00:30" for 30 seconds)
+    /// </summary>
+    /// <example>00:01:00</example>
     public TimeSpan? IdleHeartbeat { get; set; }
 }
 

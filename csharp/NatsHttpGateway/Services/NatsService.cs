@@ -15,15 +15,16 @@ public class NatsService : INatsService, IDisposable
     private readonly ILogger<NatsService> _logger;
     private readonly string _defaultStreamPrefix;
     private readonly Dictionary<string, string> _subjectToStreamMap = new();
+    private bool _disposed = false;
 
     public NatsService(IConfiguration configuration, ILogger<NatsService> logger)
     {
         _logger = logger;
+        var natsUrl = configuration["NATS_URL"] ?? "nats://localhost:4222";
+        _defaultStreamPrefix = configuration["STREAM_PREFIX"] ?? "events";
+
         try
         {
-            var natsUrl = configuration["NATS_URL"] ?? "nats://localhost:4222";
-            _defaultStreamPrefix = configuration["STREAM_PREFIX"] ?? "events";
-
             var opts = new NatsOpts { Url = natsUrl };
             _nats = new NatsConnection(opts);
             _nats.ConnectAsync().AsTask().Wait();
@@ -33,8 +34,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to initialize NATS connection");
-            throw;
+            throw new InvalidOperationException($"Failed to initialize NATS connection to {natsUrl}", ex);
         }
     }
 
@@ -52,7 +52,7 @@ public class NatsService : INatsService, IDisposable
         try
         {
             // Ensure stream exists for this subject
-            var streamName = await EnsureStreamExistsAsync(subject);
+            await EnsureStreamExistsAsync(subject);
 
             // Build message payload
             var payload = new
@@ -76,15 +76,14 @@ public class NatsService : INatsService, IDisposable
             {
                 Published = true,
                 Subject = subject,
-                Stream = ack.Stream,
+                Stream = ack.Stream!,
                 Sequence = ack.Seq,
                 Timestamp = DateTime.UtcNow
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to publish message to {Subject}", subject);
-            throw;
+            throw new InvalidOperationException($"Failed to publish message to subject '{subject}'", ex);
         }
     }
 
@@ -124,7 +123,7 @@ public class NatsService : INatsService, IDisposable
             var consumer = await _js.CreateConsumerAsync(streamName, consumerConfig);
 
             var messages = new List<MessageResponse>();
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
 
             try
             {
@@ -178,8 +177,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch messages from {SubjectFilter}", subjectFilter);
-            throw;
+            throw new InvalidOperationException($"Failed to fetch messages from subject filter '{subjectFilter}'", ex);
         }
     }
 
@@ -201,14 +199,13 @@ public class NatsService : INatsService, IDisposable
             }
             catch (NatsJSApiException ex) when (ex.Error.Code == 404)
             {
-                _logger.LogError("Consumer {ConsumerName} not found in stream {StreamName}", consumerName, streamName);
                 throw new InvalidOperationException(
                     $"Consumer '{consumerName}' does not exist in stream '{streamName}'. " +
-                    $"Please create the consumer first using the NATS CLI or management API.");
+                    $"Please create the consumer first using the NATS CLI or management API.", ex);
             }
 
             var messages = new List<MessageResponse>();
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
 
             try
             {
@@ -253,9 +250,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch messages from consumer {ConsumerName} in stream {Stream}",
-                consumerName, streamName);
-            throw;
+            throw new InvalidOperationException($"Failed to fetch messages from consumer '{consumerName}' in stream '{streamName}'", ex);
         }
     }
 
@@ -346,10 +341,9 @@ public class NatsService : INatsService, IDisposable
         }
         catch (NatsJSApiException ex) when (ex.Error.Code == 404)
         {
-            _logger.LogError("Consumer {ConsumerName} not found in stream {StreamName}", consumerName, streamName);
             throw new InvalidOperationException(
                 $"Consumer '{consumerName}' does not exist in stream '{streamName}'. " +
-                $"Please create the consumer first using the NATS CLI or management API.");
+                $"Please create the consumer first using the NATS CLI or management API.", ex);
         }
 
         _logger.LogInformation("Started streaming from consumer {ConsumerName} in stream {StreamName}",
@@ -402,7 +396,7 @@ public class NatsService : INatsService, IDisposable
         catch (NatsJSApiException ex) when (ex.Error.Code == 404)
         {
             // Stream doesn't exist, create it
-            _logger.LogInformation("Creating stream {Stream} for subject pattern {Subject}", streamName, subject);
+            _logger.LogInformation(ex, "Creating stream {Stream} for subject pattern {Subject}", streamName, subject);
 
             var subjectPattern = GetSubjectPattern(subject);
             var streamConfig = new StreamConfig(streamName, new[] { subjectPattern })
@@ -437,7 +431,7 @@ public class NatsService : INatsService, IDisposable
     /// <summary>
     /// Converts specific subject to wildcard pattern (e.g., "events.test" -> "events.>")
     /// </summary>
-    private string GetSubjectPattern(string subject)
+    private static string GetSubjectPattern(string subject)
     {
         var parts = subject.Split('.');
         return parts.Length > 0 ? $"{parts[0]}.>" : ">";
@@ -456,7 +450,7 @@ public class NatsService : INatsService, IDisposable
             {
                 streams.Add(new StreamSummary
                 {
-                    Name = stream.Info.Config.Name,
+                    Name = stream.Info.Config.Name!,
                     Subjects = stream.Info.Config.Subjects?.ToArray() ?? Array.Empty<string>(),
                     Messages = (ulong)stream.Info.State.Messages,
                     Bytes = (ulong)stream.Info.State.Bytes,
@@ -471,8 +465,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to list JetStream streams");
-            throw;
+            throw new InvalidOperationException("Failed to list JetStream streams", ex);
         }
     }
 
@@ -489,7 +482,7 @@ public class NatsService : INatsService, IDisposable
 
             return new StreamSummary
             {
-                Name = stream.Info.Config.Name,
+                Name = stream.Info.Config.Name!,
                 Subjects = stream.Info.Config.Subjects?.ToArray() ?? Array.Empty<string>(),
                 Messages = (ulong)stream.Info.State.Messages,
                 Bytes = (ulong)stream.Info.State.Bytes,
@@ -527,15 +520,14 @@ public class NatsService : INatsService, IDisposable
                     FirstTime = stream.Info.State.FirstTs,
                     LastTime = stream.Info.State.LastTs,
                     ConsumerCount = (int)stream.Info.State.ConsumerCount,
-                    NumSubjects = (long)stream.Info.State.NumSubjects,
-                    NumDeleted = (long)stream.Info.State.NumDeleted
+                    NumSubjects = stream.Info.State.NumSubjects,
+                    NumDeleted = stream.Info.State.NumDeleted
                 }
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get stream info for {Stream}", name);
-            throw;
+            throw new KeyNotFoundException($"Failed to get stream info for '{name}'", ex);
         }
     }
 
@@ -582,8 +574,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get subjects for stream {Stream}", name);
-            throw;
+            throw new InvalidOperationException($"Failed to get subjects for stream '{name}'", ex);
         }
     }
 
@@ -631,10 +622,20 @@ public class NatsService : INatsService, IDisposable
                 inactiveThreshold = TimeSpan.FromMinutes(5);
             }
 
+            // For durable consumers, use the provided name. For ephemeral, name can be empty (NATS generates one)
+            string? consumerName;
+            if (request.Durable)
+            {
+                consumerName = request.Name;
+            }
+            else
+            {
+                consumerName = string.IsNullOrEmpty(request.Name) ? null : request.Name;
+            }
+
             var consumerConfig = new NATS.Client.JetStream.Models.ConsumerConfig
             {
-                // For durable consumers, use the provided name. For ephemeral, name can be empty (NATS generates one)
-                Name = request.Durable ? request.Name : (string.IsNullOrEmpty(request.Name) ? null : request.Name),
+                Name = consumerName,
                 Description = request.Description,
                 FilterSubject = request.FilterSubject,
                 DeliverPolicy = deliverPolicy,
@@ -665,8 +666,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create consumer {ConsumerName} on stream {StreamName}", request.Name, streamName);
-            throw;
+            throw new InvalidOperationException($"Failed to create consumer '{request.Name}' on stream '{streamName}'", ex);
         }
     }
 
@@ -684,7 +684,7 @@ public class NatsService : INatsService, IDisposable
                 consumers.Add(new ConsumerSummary
                 {
                     StreamName = streamName,
-                    Name = consumer.Info.Config.Name,
+                    Name = consumer.Info.Config.Name!,
                     Description = consumer.Info.Config.Description,
                     Created = consumer.Info.Created.DateTime,
                     Config = MapConsumerConfig(consumer.Info.Config),
@@ -703,8 +703,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to list consumers for stream {StreamName}", streamName);
-            throw;
+            throw new InvalidOperationException($"Failed to list consumers for stream '{streamName}'", ex);
         }
     }
 
@@ -727,8 +726,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get consumer info for {ConsumerName} on stream {StreamName}", consumerName, streamName);
-            throw;
+            throw new InvalidOperationException($"Failed to get consumer info for '{consumerName}' on stream '{streamName}'", ex);
         }
     }
 
@@ -755,8 +753,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to delete consumer {ConsumerName} from stream {StreamName}", consumerName, streamName);
-            throw;
+            throw new InvalidOperationException($"Failed to delete consumer '{consumerName}' from stream '{streamName}'", ex);
         }
     }
 
@@ -796,14 +793,11 @@ public class NatsService : INatsService, IDisposable
 
             // Check if messages are piling up
             var pendingMessages = info.NumPending;
-            if (pendingMessages > 10000)
+            if (pendingMessages > 10000 && isHealthy) // Don't override existing issues
             {
-                if (isHealthy) // Don't override existing issues
-                {
-                    isHealthy = false;
-                    status = "Lagging";
-                    issue = $"High pending messages: {pendingMessages}";
-                }
+                isHealthy = false;
+                status = "Lagging";
+                issue = $"High pending messages: {pendingMessages}";
             }
 
             _logger.LogInformation("Health check for consumer {ConsumerName}: {Status}", consumerName, status);
@@ -827,8 +821,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to check health for consumer {ConsumerName}", consumerName);
-            throw;
+            throw new InvalidOperationException($"Failed to check health for consumer '{consumerName}'", ex);
         }
     }
 
@@ -851,7 +844,7 @@ public class NatsService : INatsService, IDisposable
         return new ConsumerDetails
         {
             StreamName = streamName,
-            Name = info.Config.Name,
+            Name = info.Config.Name!,
             Description = info.Config.Description,
             Created = info.Created.DateTime,
             Config = MapConsumerConfig(info.Config),
@@ -897,7 +890,7 @@ public class NatsService : INatsService, IDisposable
     {
         return new ConsumerStateData
         {
-            Delivered = (ulong)info.Delivered.ConsumerSeq,
+            Delivered = info.Delivered.ConsumerSeq,
             AckPending = (ulong)info.NumAckPending,
             Redelivered = (ulong)info.NumRedelivered,
             NumPending = (long)info.NumPending,
@@ -948,8 +941,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to peek messages from consumer {ConsumerName}", consumerName);
-            throw;
+            throw new InvalidOperationException($"Failed to peek messages from consumer '{consumerName}'", ex);
         }
     }
 
@@ -1010,8 +1002,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to reset consumer {ConsumerName}", consumerName);
-            throw;
+            throw new InvalidOperationException($"Failed to reset consumer '{consumerName}'", ex);
         }
     }
 
@@ -1024,7 +1015,7 @@ public class NatsService : INatsService, IDisposable
         {
             // In a real implementation, you'd want to store the consumer config somewhere
             // For now, we'll just return a message indicating this limitation
-            var consumer = await _js.GetConsumerAsync(streamName, consumerName);
+            await _js.GetConsumerAsync(streamName, consumerName);
 
             _logger.LogWarning("Pause requested for consumer {ConsumerName}, but NATS doesn't support native pause. Consider deleting the consumer.", consumerName);
 
@@ -1038,8 +1029,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to pause consumer {ConsumerName}", consumerName);
-            throw;
+            throw new InvalidOperationException($"Failed to pause consumer '{consumerName}'", ex);
         }
     }
 
@@ -1050,7 +1040,7 @@ public class NatsService : INatsService, IDisposable
     {
         try
         {
-            var consumer = await _js.GetConsumerAsync(streamName, consumerName);
+            await _js.GetConsumerAsync(streamName, consumerName);
 
             _logger.LogInformation("Resume requested for consumer {ConsumerName}", consumerName);
 
@@ -1064,8 +1054,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to resume consumer {ConsumerName}", consumerName);
-            throw;
+            throw new InvalidOperationException($"Failed to resume consumer '{consumerName}'", ex);
         }
     }
 
@@ -1142,7 +1131,7 @@ public class NatsService : INatsService, IDisposable
                     PendingMessages = (long)info.NumPending,
                     AcknowledgedMessages = acknowledged > 0 ? acknowledged : 0,
                     RedeliveredMessages = (long)info.NumRedelivered,
-                    DeliveredCount = (ulong)info.Delivered.ConsumerSeq,
+                    DeliveredCount = info.Delivered.ConsumerSeq,
                     IsHealthy = consumerLag < 1000 && (long)info.NumAckPending < 100
                 }
             };
@@ -1161,8 +1150,7 @@ public class NatsService : INatsService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get metrics history for consumer {ConsumerName}", consumerName);
-            throw;
+            throw new InvalidOperationException($"Failed to get metrics history for consumer '{consumerName}'", ex);
         }
     }
 
@@ -1270,7 +1258,7 @@ public class NatsService : INatsService, IDisposable
     /// <summary>
     /// Tries to get a string preview of binary data
     /// </summary>
-    private string? TryGetStringPreview(byte[] data, int maxLength)
+    private static string? TryGetStringPreview(byte[] data, int maxLength)
     {
         try
         {
@@ -1285,6 +1273,21 @@ public class NatsService : INatsService, IDisposable
 
     public void Dispose()
     {
-        _nats?.DisposeAsync().AsTask().Wait();
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!_disposed)
+        {
+            if (disposing)
+            {
+                // Dispose managed resources
+                _nats?.DisposeAsync().AsTask().Wait();
+            }
+
+            _disposed = true;
+        }
     }
 }

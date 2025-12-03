@@ -68,7 +68,7 @@ public class StreamsController : ControllerBase
         }
         catch (NatsJSApiException ex) when (ex.Error.Code == 404)
         {
-            _logger.LogWarning("Stream not found: {Stream}", name);
+            _logger.LogWarning(ex, "Stream not found: {Stream}", name);
             return NotFound(new { error = $"Stream '{name}' not found" });
         }
         catch (Exception ex)
@@ -101,7 +101,7 @@ public class StreamsController : ControllerBase
         }
         catch (NatsJSApiException ex) when (ex.Error.Code == 404)
         {
-            _logger.LogWarning("Stream not found: {Stream}", name);
+            _logger.LogWarning(ex, "Stream not found: {Stream}", name);
             return NotFound(new { error = $"Stream '{name}' not found" });
         }
         catch (Exception ex)
