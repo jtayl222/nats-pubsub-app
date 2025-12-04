@@ -71,6 +71,7 @@ test-results/
 coverage/
 *.coverage
 *.coveragexml
+consumer_uat_log.json
 
 # NATS data
 nats-data/
