@@ -226,6 +226,9 @@ public class NatsService : INatsService, IDisposable
                             Data = data,
                             SizeBytes = msg.Data.Length
                         });
+
+                        // Acknowledge the message to advance consumer position
+                        await msg.AckAsync();
                     }
 
                     if (messages.Count >= limit)
@@ -367,6 +370,9 @@ public class NatsService : INatsService, IDisposable
                     Data = data,
                     SizeBytes = msg.Data.Length
                 };
+
+                // Acknowledge the message to advance consumer position
+                await msg.AckAsync();
             }
         }
     }
