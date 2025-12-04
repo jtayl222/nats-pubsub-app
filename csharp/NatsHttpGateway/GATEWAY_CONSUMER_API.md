@@ -219,23 +219,78 @@ curl "http://localhost:8080/api/consumers/events/my-processor/messages?limit=3"
 
 ### Reset a Consumer
 
-Resets a consumer's delivery state, allowing it to re-process messages.
+Resets a consumer's delivery state, allowing it to re-process messages from a different starting point.
 
 `POST /api/consumers/{stream}/{consumer}/reset`
 
+> ⚠️ **WARNING: This is a DESTRUCTIVE operation**
+>
+> Resetting a consumer:
+> - **Deletes** the consumer entirely
+> - **Recreates** it with a new starting position
+> - **Loses** any unacknowledged messages
+> - **Disconnects** all active workers
+> - **Resets** all consumer metrics to zero
+>
+> See [Resetting and Replaying Consumers](NATS_CONSUMER_BACKGROUND.md#resetting-and-replaying-consumers) for detailed warnings, best practices, and real-world examples.
+
+**Path Parameters:**
+- `stream` (string): The stream name
+- `consumer` (string): The consumer name
+
 **Request Body:** (`ConsumerResetRequest`)
-- **To replay all messages:**
-  ```json
-  { "action": "reset" }
-  ```
-- **To replay from a sequence number:**
-  ```json
-  { "action": "replay_from_sequence", "sequence": 12345 }
-  ```
-- **To replay from a specific time:**
-  ```json
-  { "action": "replay_from_time", "time": "2025-01-15T14:00:00Z" }
-  ```
+
+**Option 1: Replay all messages from the beginning**
+```json
+{ "action": "reset" }
+```
+Use when: Recovering from bugs, rebuilding projections, disaster recovery.
+
+**Option 2: Replay from a specific sequence number**
+```json
+{ "action": "replay_from_sequence", "sequence": 12345 }
+```
+Use when: Partial reprocessing, skipping manually-fixed messages.
+**Most precise** - you know exactly which message you'll start from.
+
+**Option 3: Replay from a specific timestamp**
+```json
+{ "action": "replay_from_time", "time": "2025-01-15T14:00:00Z" }
+```
+Use when: Time-based recovery, regulatory replay requirements.
+**Less precise** - subject to clock skew and out-of-order arrivals.
+
+**Example Request:**
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events/my-processor/reset" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "replay_from_sequence",
+    "sequence": 100
+  }'
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Consumer 'my-processor' reset successfully",
+  "consumerName": "my-processor"
+}
+```
+
+**Before Resetting - Critical Checklist:**
+1. ✅ Check consumer state: `GET /api/consumers/{stream}/{consumer}` - verify `ackPending` is 0
+2. ✅ Check stream bounds: `GET /api/streams/{stream}` - verify sequence/time ranges
+3. ✅ Stop all workers consuming from this consumer
+4. ✅ Consider creating a **new consumer** instead for testing/parallel processing
+
+**After Resetting:**
+- Verify the consumer was recreated: `GET /api/consumers/{stream}/{consumer}`
+- Monitor replay progress by watching the `delivered` count
+- Restart workers once reset is confirmed
+
+**Safer Alternative:** Instead of resetting, create a new consumer (e.g., `my-processor-replay`) for testing or parallel replay without affecting production.
 
 ---
 

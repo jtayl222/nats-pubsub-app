@@ -195,6 +195,655 @@ When creating durable consumers, you have full control over their behavior.
 | `explicit` | Each message must be individually acknowledged. | Guaranteed, reliable processing. |
 | `all` | Acknowledging one message acknowledges all previous ones. | High-throughput batch processing. |
 
+## Consumer Templates & Patterns
+
+The gateway provides predefined consumer templates for common use cases. These templates are available via `GET /api/consumers/templates` and can be used as starting points for creating your own consumers.
+
+### Real-Time Processor (Ephemeral)
+
+**Use Case**: Process new messages as they arrive in real-time, such as event processing or real-time analytics.
+
+**Characteristics**:
+- Ephemeral (temporary) - auto-deleted after inactivity
+- Processes only new messages (created after consumer starts)
+- Explicit acknowledgment for reliability
+- Limited retries (3 attempts)
+
+**Create via CLI**:
+```bash
+nats consumer add events real-time-processor \
+  --filter events.> \
+  --deliver new \
+  --ack explicit \
+  --max-deliver 3 \
+  --ack-wait 30s
+```
+
+**Create via HTTP**:
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "real-time-processor",
+    "durable": false,
+    "filterSubject": "events.>",
+    "deliverPolicy": "new",
+    "ackPolicy": "explicit",
+    "maxDeliver": 3,
+    "ackWait": "00:00:30"
+  }'
+```
+
+**When NOT to use**: Don't use ephemeral consumers if you need to process historical messages or maintain state across restarts.
+
+---
+
+### Batch Processor (Durable)
+
+**Use Case**: Process all messages from the beginning, ideal for batch processing, data migration, or building materialized views.
+
+**Characteristics**:
+- Durable (persistent) - survives restarts
+- Processes all messages from stream start
+- Explicit acknowledgment
+- Higher retry limit (5 attempts)
+- Longer acknowledgment timeout (5 minutes)
+
+**Create via CLI**:
+```bash
+nats consumer add events batch-processor \
+  --filter events.> \
+  --deliver all \
+  --ack explicit \
+  --max-deliver 5 \
+  --ack-wait 5m
+```
+
+**Create via HTTP**:
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "batch-processor",
+    "durable": true,
+    "filterSubject": "events.>",
+    "deliverPolicy": "all",
+    "ackPolicy": "explicit",
+    "maxDeliver": 5,
+    "ackWait": "00:05:00"
+  }'
+```
+
+**When NOT to use**: Don't use for low-latency real-time processing where you only care about recent events.
+
+---
+
+### Work Queue (Durable)
+
+**Use Case**: Distribute tasks across multiple workers, such as job processing or task distribution.
+
+**Characteristics**:
+- Durable for reliable job processing
+- Processes all messages
+- Explicit acknowledgment
+- High retry limit (10 attempts)
+- Limits concurrent unacknowledged messages (100)
+- Multiple workers can share the same consumer
+
+**Create via CLI**:
+```bash
+nats consumer add events work-queue \
+  --filter events.jobs.> \
+  --deliver all \
+  --ack explicit \
+  --max-deliver 10 \
+  --ack-wait 1m \
+  --max-ack-pending 100
+```
+
+**Create via HTTP**:
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "work-queue",
+    "durable": true,
+    "filterSubject": "events.jobs.>",
+    "deliverPolicy": "all",
+    "ackPolicy": "explicit",
+    "maxDeliver": 10,
+    "ackWait": "00:01:00",
+    "maxAckPending": 100
+  }'
+```
+
+**Horizontal Scaling**: Multiple instances can bind to the same consumer name - NATS will distribute messages among them automatically.
+
+---
+
+### Fire-and-Forget (Ephemeral)
+
+**Use Case**: Non-critical events like logging, metrics, or monitoring where message loss is acceptable.
+
+**Characteristics**:
+- Ephemeral (temporary)
+- No acknowledgments (maximum performance)
+- Only new messages
+- Single delivery attempt
+- Ideal for high-throughput observability data
+
+**Create via CLI**:
+```bash
+nats consumer add events fire-and-forget \
+  --filter events.metrics.> \
+  --deliver new \
+  --ack none \
+  --max-deliver 1
+```
+
+**Create via HTTP**:
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "fire-and-forget",
+    "durable": false,
+    "filterSubject": "events.metrics.>",
+    "deliverPolicy": "new",
+    "ackPolicy": "none",
+    "maxDeliver": 1
+  }'
+```
+
+**When NOT to use**: Never use for critical business data or transactions where you cannot afford to lose messages.
+
+---
+
+### Latest-Only (Ephemeral)
+
+**Use Case**: Only process the most recent message, useful for status updates or latest state snapshots.
+
+**Characteristics**:
+- Ephemeral
+- Starts from the last message
+- Skips historical data
+- Explicit acknowledgment
+
+**Create via CLI**:
+```bash
+nats consumer add events latest-only \
+  --filter events.status.> \
+  --deliver last \
+  --ack explicit \
+  --max-deliver 3
+```
+
+**Create via HTTP**:
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "latest-only",
+    "durable": false,
+    "filterSubject": "events.status.>",
+    "deliverPolicy": "last",
+    "ackPolicy": "explicit",
+    "maxDeliver": 3
+  }'
+```
+
+**Trade-off**: You'll miss any messages that arrived between the last message and when the consumer was created.
+
+---
+
+### Durable Processor (Critical Workloads)
+
+**Use Case**: Mission-critical processing where no message can be lost and the consumer must survive restarts.
+
+**Characteristics**:
+- Durable with long inactivity threshold (24 hours)
+- Unlimited retries (`maxDeliver: -1`)
+- Long acknowledgment timeout (10 minutes)
+- High max pending acknowledgments (1000)
+- Processes all messages from beginning
+
+**Create via CLI**:
+```bash
+nats consumer add events durable-processor \
+  --filter events.critical.> \
+  --deliver all \
+  --ack explicit \
+  --max-deliver -1 \
+  --ack-wait 10m \
+  --max-ack-pending 1000
+```
+
+**Create via HTTP**:
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "durable-processor",
+    "durable": true,
+    "filterSubject": "events.critical.>",
+    "deliverPolicy": "all",
+    "ackPolicy": "explicit",
+    "maxDeliver": -1,
+    "ackWait": "00:10:00",
+    "inactiveThreshold": "1.00:00:00",
+    "maxAckPending": 1000
+  }'
+```
+
+**Warning**: Unlimited retries means poisoned messages will retry forever. Implement dead-letter queue handling in your application.
+
+---
+
+### Choosing the Right Template
+
+| Scenario | Recommended Template | Key Reason |
+|----------|---------------------|------------|
+| Dashboard showing live events | Real-Time Processor | Only new messages, low latency |
+| Processing order history | Batch Processor | All historical messages |
+| Background job queue | Work Queue | Horizontal scaling, retry logic |
+| Collecting application logs | Fire-and-Forget | High throughput, loss acceptable |
+| Displaying current system status | Latest-Only | Only care about newest state |
+| Payment processing | Durable Processor | Cannot lose transactions |
+| Rebuilding cache from events | Batch Processor | Replay entire event stream |
+| Real-time notifications | Real-Time Processor | Only new events matter |
+
+## Resetting and Replaying Consumers
+
+Sometimes you need to "rewind" a consumer to replay messages from a different starting point. This is essential for recovering from bugs, reprocessing data, or debugging issues.
+
+### How Consumer Reset Works
+
+**IMPORTANT**: Resetting a consumer is a **destructive operation**. The gateway doesn't actually "reset" the consumer state - instead, it:
+
+1. **Retrieves** the current consumer configuration
+2. **Deletes** the consumer entirely (including all state)
+3. **Recreates** the consumer with the same name but a new starting position
+
+This means:
+- ❌ Any unacknowledged messages are lost
+- ❌ Consumer metrics reset to zero
+- ❌ Connected workers are disconnected
+- ✅ Configuration (ack policy, retries, etc.) is preserved
+- ✅ Consumer name remains the same
+
+### The Three Reset Actions
+
+#### 1. Reset to Beginning (`action: "reset"`)
+
+Replays **all messages** from the first message in the stream.
+
+**CLI Equivalent:**
+```bash
+nats consumer info events my-consumer
+nats consumer rm events my-consumer
+nats consumer add events my-consumer \
+  --filter events.> \
+  --deliver all \
+  --ack explicit
+```
+
+**HTTP API:**
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events/my-consumer/reset" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "reset"}'
+```
+
+**Use Cases:**
+- Bug fix: "My processor had a critical bug, I need to reprocess all events"
+- Disaster recovery: "Database corrupted, rebuild from event stream"
+- New feature: "Added a new projection, need to backfill from history"
+
+**Example:**
+```
+Before reset:
+  Stream messages: [1] [2] [3] [4] [5] [6] [7] [8] [9] [10] [11] [12]
+  Consumer position:                              ^
+                                             (at seq 8, delivered 8)
+
+After reset (action="reset"):
+  Consumer position: ^
+                  (seq 1, will deliver all 12 messages)
+```
+
+---
+
+#### 2. Replay from Sequence (`action: "replay_from_sequence"`)
+
+Starts from a **specific message number** and continues forward.
+
+**CLI Equivalent:**
+```bash
+nats consumer rm events my-consumer
+nats consumer add events my-consumer \
+  --filter events.> \
+  --deliver by_start_sequence \
+  --opt-start-seq 75 \
+  --ack explicit
+```
+
+**HTTP API:**
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events/my-consumer/reset" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "replay_from_sequence",
+    "sequence": 75
+  }'
+```
+
+**Use Cases:**
+- Partial reprocessing: "Messages 1-74 are fine, but 75-100 need reprocessing"
+- Resume after manual intervention: "Support team fixed data, continue from message 200"
+- Skip problematic messages: "Message 50 is poison, skip to 51"
+
+**Example:**
+```
+Before reset:
+  Stream messages: [1] [2] [3] [4] [5] [6] [7] [8] [9] [10] [11] [12]
+  Consumer position:                              ^
+                                             (at seq 8)
+
+After reset (sequence=5):
+  Consumer position:                 ^
+                                (seq 5, will deliver 5-12)
+```
+
+**Precision:** This is the most predictable reset method because you know exactly which message you'll start from.
+
+---
+
+#### 3. Replay from Time (`action: "replay_from_time"`)
+
+Starts from the **first message on or after** a specific timestamp.
+
+**CLI Equivalent:**
+```bash
+nats consumer rm events my-consumer
+nats consumer add events my-consumer \
+  --filter events.> \
+  --deliver by_start_time \
+  --opt-start-time "2025-12-03T20:00:00Z" \
+  --ack explicit
+```
+
+**HTTP API:**
+```bash
+curl -X POST "http://localhost:8080/api/consumers/events/my-consumer/reset" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "replay_from_time",
+    "time": "2025-12-03T20:00:00Z"
+  }'
+```
+
+**Use Cases:**
+- Time-based recovery: "Deployed buggy code at 8pm, reprocess since then"
+- Regulatory requirements: "Audit requested replay of last 24 hours"
+- Investigation: "Issue reported at 3pm, replay events since 2:50pm"
+
+**Example:**
+```
+Stream messages with timestamps:
+  [1: 19:45] [2: 19:50] [3: 19:55] [4: 20:00] [5: 20:05] [6: 20:10]
+
+Reset to time="2025-12-03T20:00:00Z":
+  Consumer starts at:                ^
+                                (seq 4, first message >= 20:00)
+```
+
+**Warning:** Time-based reset is less precise than sequence-based because:
+- Messages might arrive out of order
+- Clock skew between publishers
+- Timestamps are set when messages are published, not received
+
+---
+
+### Critical Warnings ⚠️
+
+#### 1. **Unacknowledged Messages Are Lost**
+
+If your consumer has delivered messages waiting for acknowledgment, they're **permanently lost** when you reset:
+
+```
+Before reset:
+  Delivered: 100 messages
+  AckPending: 10 (messages 91-100 waiting for ACK)
+
+After reset:
+  Those 10 unacked messages? GONE. Consumer is brand new.
+```
+
+**Mitigation:** Check consumer state before resetting:
+```bash
+curl "http://localhost:8080/api/consumers/events/my-consumer"
+# Look at "ackPending" - if non-zero, wait for workers to finish
+```
+
+#### 2. **Concurrent Workers Are Disconnected**
+
+If multiple instances are consuming from the same consumer, they'll all be disconnected when the consumer is deleted.
+
+**Mitigation:**
+1. Stop all workers
+2. Perform reset
+3. Restart workers
+
+#### 3. **No Validation**
+
+The reset operation doesn't validate:
+- Whether the sequence number exists
+- Whether the timestamp is reasonable
+- How many messages you're about to replay
+
+**Danger Example:**
+```bash
+# Stream has 10 MILLION messages
+# Consumer is at message 9,999,999
+# Accidental reset:
+curl -X POST ".../reset" -d '{"action": "reset"}'
+# Now consumer will replay ALL 10 MILLION messages!
+```
+
+**Mitigation:** Always check stream state first:
+```bash
+curl "http://localhost:8080/api/streams/events"
+# Check "messages", "firstSeq", "lastSeq" before resetting
+```
+
+#### 4. **State Resets to Zero**
+
+After reset, consumer metrics return to initial state:
+- `delivered`: 0
+- `ackPending`: 0
+- `redelivered`: 0
+- `created`: NOW (new timestamp)
+
+This can break monitoring/alerting that tracks consumer progress.
+
+---
+
+### Best Practices
+
+#### Before Resetting
+
+1. **Verify current state:**
+   ```bash
+   # Check where consumer currently is
+   GET /api/consumers/events/my-consumer
+   ```
+
+2. **Check stream bounds:**
+   ```bash
+   # Verify sequence/time ranges
+   GET /api/streams/events
+   ```
+
+3. **Stop consuming:**
+   - Gracefully shutdown all workers
+   - Verify `ackPending` is zero
+
+#### During Reset
+
+4. **Use sequence-based for precision:**
+   - More predictable than time-based
+   - You know exactly which message starts
+   - No timezone or clock skew issues
+
+5. **Document why you're resetting:**
+   ```bash
+   # Good: Leave an audit trail
+   echo "Resetting my-consumer due to bug #1234" >> reset_log.txt
+   curl -X POST ".../reset" -d '{"action":"reset"}'
+   ```
+
+#### After Reset
+
+6. **Verify new state:**
+   ```bash
+   # Confirm consumer was recreated
+   GET /api/consumers/events/my-consumer
+   # Check numPending matches expectations
+   ```
+
+7. **Monitor replay progress:**
+   - Watch `delivered` count
+   - Check for errors/failures
+   - Ensure workers don't fall behind
+
+---
+
+### Alternative: Create a New Consumer Instead
+
+Instead of resetting an existing consumer, consider creating a **new consumer** for testing or parallel processing:
+
+```bash
+# Don't reset production consumer
+# Instead, create a test consumer
+POST /api/consumers/events
+{
+  "name": "my-consumer-replay-test",
+  "durable": true,
+  "filterSubject": "events.>",
+  "deliverPolicy": "all",
+  "ackPolicy": "explicit"
+}
+```
+
+**Advantages:**
+- ✅ Production consumer keeps working
+- ✅ No risk of breaking active workers
+- ✅ Can compare results between old and new
+- ✅ Easy rollback (just delete new consumer)
+
+**When to use:**
+- Testing reprocessing logic
+- Parallel processing for backfill
+- Investigating issues without impacting production
+
+---
+
+### Real-World Examples
+
+#### Example 1: Bug Fix and Reprocess
+
+**Scenario:** Deployed v2.0 with a bug that wrote incorrect totals to database.
+
+```bash
+# 1. Stop the buggy v2.0 workers
+kubectl scale deployment order-processor --replicas=0
+
+# 2. Verify consumer is idle
+curl "http://localhost:8080/api/consumers/events/order-processor"
+# Confirm ackPending = 0
+
+# 3. Deploy v2.1 with the fix
+
+# 4. Reset consumer to reprocess last 6 hours
+curl -X POST "http://localhost:8080/api/consumers/events/order-processor/reset" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "replay_from_time",
+    "time": "2025-12-03T15:00:00Z"
+  }'
+
+# 5. Start v2.1 workers
+kubectl scale deployment order-processor --replicas=3
+
+# 6. Monitor progress
+watch curl "http://localhost:8080/api/consumers/events/order-processor"
+```
+
+#### Example 2: Partial Reprocessing After Manual Fix
+
+**Scenario:** Support team manually corrected data for orders 1000-1500. Need to reprocess from 1501 onwards.
+
+```bash
+# 1. Check current consumer position
+curl "http://localhost:8080/api/consumers/events/order-processor"
+# Response shows delivered=1500, numPending=2500
+
+# 2. Reset to skip manually fixed range
+curl -X POST "http://localhost:8080/api/consumers/events/order-processor/reset" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "replay_from_sequence",
+    "sequence": 1501
+  }'
+
+# 3. Verify new position
+curl "http://localhost:8080/api/consumers/events/order-processor"
+# Response shows delivered=0, numPending=2500 (sequences 1501-4000)
+```
+
+#### Example 3: Disaster Recovery
+
+**Scenario:** Database was corrupted. Need to rebuild from event stream.
+
+```bash
+# 1. Create a new consumer for rebuild (don't affect production)
+curl -X POST "http://localhost:8080/api/consumers/events" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "rebuild-consumer",
+    "durable": true,
+    "filterSubject": "orders.>",
+    "deliverPolicy": "all",
+    "ackPolicy": "explicit",
+    "maxDeliver": -1,
+    "ackWait": "00:10:00"
+  }'
+
+# 2. Start rebuild workers pointing to new consumer
+./rebuild-worker --consumer=rebuild-consumer
+
+# 3. Monitor progress
+curl "http://localhost:8080/api/consumers/events/rebuild-consumer"
+
+# 4. When complete, delete rebuild consumer
+curl -X DELETE "http://localhost:8080/api/consumers/events/rebuild-consumer"
+```
+
+---
+
+### Summary
+
+| Aspect | Details |
+|--------|---------|
+| **What it does** | Deletes consumer, recreates with new starting position |
+| **What's preserved** | Name, config (ack policy, retries, filters) |
+| **What's lost** | State (delivered count, ack pending), unacked messages |
+| **Three actions** | `reset` (all), `replay_from_sequence` (from seq), `replay_from_time` (from time) |
+| **Best for precision** | `replay_from_sequence` |
+| **Most dangerous** | Resetting production consumer with active workers |
+| **Safer alternative** | Create new consumer for replay instead of resetting |
+| **Check first** | `ackPending`, stream bounds, worker status |
+
 ## Monitoring and Management
 
 You can use the NATS CLI or the gateway's API endpoints (`GET /api/consumers/{stream}/{name}`) to monitor consumer status.
