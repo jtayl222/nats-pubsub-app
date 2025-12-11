@@ -14,6 +14,7 @@ BASE_URL = os.getenv("GATEWAY_BASE_URL", "http://localhost:8080").rstrip("/")
 DEFAULT_STREAM = os.getenv("GATEWAY_STREAM", "events")
 DEFAULT_SUBJECT = os.getenv("GATEWAY_SUBJECT", "events.demo")
 DEFAULT_CONSUMER = "test-consumer"
+JWT_TOKEN = os.getenv("GATEWAY_JWT_TOKEN", "")
 
 
 class Colors:
@@ -54,6 +55,9 @@ def print_curl(method: str, url: str, body: Optional[Dict] = None):
     """Print curl command."""
     print(f"\n{Colors.YELLOW}Curl equivalent:{Colors.END}")
     curl_parts = [f"curl -X {method}"]
+
+    if JWT_TOKEN:
+        curl_parts.append(f"-H 'Authorization: Bearer {JWT_TOKEN}'")
 
     if body:
         curl_parts.append("-H 'Content-Type: application/json'")
@@ -168,7 +172,8 @@ def show_menu():
     print(f"Base URL: {Colors.CYAN}{BASE_URL}{Colors.END}")
     print(f"Default Stream: {Colors.CYAN}{DEFAULT_STREAM}{Colors.END}")
     print(f"Default Subject: {Colors.CYAN}{DEFAULT_SUBJECT}{Colors.END}")
-    print(f"Default Consumer: {Colors.CYAN}{DEFAULT_CONSUMER}{Colors.END}\n")
+    print(f"Default Consumer: {Colors.CYAN}{DEFAULT_CONSUMER}{Colors.END}")
+    print(f"JWT Token: {Colors.CYAN}{'[SET]' if JWT_TOKEN else '[NOT SET]'}{Colors.END}\n")
 
     for key, endpoint in ENDPOINTS.items():
         if endpoint is None:  # Section header
@@ -301,6 +306,8 @@ def execute_endpoint(endpoint: Dict):
         print(f"\n{Colors.CYAN}Executing...{Colors.END}")
 
         headers = {"Content-Type": "application/json"}
+        if JWT_TOKEN:
+            headers["Authorization"] = f"Bearer {JWT_TOKEN}"
         method = endpoint["method"]
 
         if method == "GET":
