@@ -1,6 +1,5 @@
 #!/bin/bash
 # Local GitLab CI/CD Pipeline Testing Script
-# This script simulates the GitLab CI pipeline locally on macOS/Linux
 #
 # Usage:
 #   ./scripts/test-gitlab-ci-local.sh [stage]
@@ -9,8 +8,12 @@
 #   all          - Run all stages (default)
 #   build        - Build only
 #   unit-test    - Unit tests only
-#   component-test - Component tests (starts NATS container)
+#   component-test - Component tests (requires NATS server)
 #   validate     - Validate .gitlab-ci.yml syntax only
+#
+# Environment Variables:
+#   NATS_URL   - NATS server URL (default: nats://localhost:4222)
+#   JWT_TOKEN  - JWT token for NATS authentication (optional)
 
 set -e
 
@@ -43,7 +46,6 @@ validate_gitlab_ci() {
     log_info "Validating .gitlab-ci.yml syntax..."
 
     if command -v gitlab-runner &> /dev/null; then
-        # Use gitlab-runner to validate
         cd "$PROJECT_ROOT"
         if gitlab-runner verify 2>/dev/null; then
             log_success "gitlab-runner is registered and ready"
@@ -52,7 +54,7 @@ validate_gitlab_ci() {
         fi
     fi
 
-    # Basic YAML syntax check using ruby (comes with macOS) or python
+    # Basic YAML syntax check
     if command -v ruby &> /dev/null; then
         ruby -ryaml -e "YAML.load_file('$PROJECT_ROOT/.gitlab-ci.yml')" 2>/dev/null && \
             log_success ".gitlab-ci.yml is valid YAML" || \
@@ -61,8 +63,6 @@ validate_gitlab_ci() {
         python3 -c "import yaml; yaml.safe_load(open('$PROJECT_ROOT/.gitlab-ci.yml'))" 2>/dev/null && \
             log_success ".gitlab-ci.yml is valid YAML" || \
             log_warn "Could not validate YAML (pyyaml not installed)"
-    else
-        log_warn "No YAML validator available (ruby or python with pyyaml)"
     fi
 }
 
@@ -99,55 +99,48 @@ stage_unit_test() {
     log_info "Results saved to: $RESULTS_DIR/"
 }
 
-start_nats() {
-    log_info "Starting NATS JetStream container..."
+ensure_nats() {
+    log_info "Checking NATS connectivity..."
 
-    # Check if NATS is already running on the expected ports
-    if curl -s http://localhost:8222/healthz > /dev/null 2>&1; then
-        log_success "NATS is already running on localhost:4222"
+    local nats_url="${NATS_URL:-nats://localhost:4222}"
+    local nats_host=$(echo "$nats_url" | sed -E 's|nats://([^:]+):.*|\1|')
+    local monitoring_url="http://${nats_host}:8222/healthz"
+
+    # Check if NATS is already running
+    if curl -s "$monitoring_url" > /dev/null 2>&1; then
+        log_success "NATS is available at $nats_url"
         return 0
     fi
 
-    # Stop existing test container if it exists but isn't responding
-    docker rm -f "$NATS_CONTAINER_NAME" 2>/dev/null || true
+    # Try to start NATS locally if Docker is available
+    if command -v docker &> /dev/null && docker info &> /dev/null 2>&1; then
+        log_info "Starting local NATS container..."
+        docker rm -f "$NATS_CONTAINER_NAME" 2>/dev/null || true
+        docker run -d \
+            --name "$NATS_CONTAINER_NAME" \
+            -p 4222:4222 \
+            -p 8222:8222 \
+            nats:latest \
+            --jetstream -m 8222
 
-    # Check if ports are in use by another container
-    if docker ps --format '{{.Ports}}' | grep -q "4222\|8222"; then
-        log_warn "Ports 4222/8222 in use by another container. Attempting to use existing NATS..."
-        for i in $(seq 1 10); do
+        STARTED_NATS=true
+
+        log_info "Waiting for NATS to be ready..."
+        for i in $(seq 1 30); do
             if curl -s http://localhost:8222/healthz > /dev/null 2>&1; then
-                log_success "Existing NATS JetStream is ready!"
+                log_success "NATS JetStream is ready!"
+                export NATS_URL="nats://localhost:4222"
                 return 0
             fi
+            echo -n "."
             sleep 1
         done
-        log_error "Could not connect to existing NATS on ports 4222/8222"
-        log_info "Stop other NATS containers with: docker ps | grep nats"
+        log_error "NATS failed to start"
         exit 1
     fi
 
-    # Start NATS with JetStream
-    docker run -d \
-        --name "$NATS_CONTAINER_NAME" \
-        -p 4222:4222 \
-        -p 8222:8222 \
-        nats:latest \
-        --jetstream -m 8222
-
-    STARTED_NATS=true
-
-    # Wait for NATS to be ready
-    log_info "Waiting for NATS to be ready..."
-    for i in $(seq 1 30); do
-        if curl -s http://localhost:8222/healthz > /dev/null 2>&1; then
-            log_success "NATS JetStream is ready!"
-            return 0
-        fi
-        echo -n "."
-        sleep 1
-    done
-
-    log_error "NATS failed to start within 30 seconds"
+    log_error "NATS is not available at $nats_url"
+    log_info "Set NATS_URL to point to your NATS server (e.g., nats://<VM-IP>:4222)"
     exit 1
 }
 
@@ -157,19 +150,21 @@ stage_component_test() {
 
     mkdir -p "$RESULTS_DIR"
 
-    # Start NATS
-    start_nats
+    ensure_nats
 
-    # Set environment variable for tests
-    export NATS_URL="nats://localhost:4222"
+    export NATS_URL="${NATS_URL:-nats://localhost:4222}"
 
-    log_info "Running component tests..."
-    dotnet test NatsHttpGateway.Tests/NatsHttpGateway.Tests.csproj \
+    if [ -n "$JWT_TOKEN" ]; then
+        log_info "Using JWT authentication for NATS"
+        export JWT_TOKEN="$JWT_TOKEN"
+    fi
+
+    log_info "Running component tests against $NATS_URL..."
+    dotnet test NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj \
         --configuration Release \
         --logger "trx;LogFileName=component-test-results.trx" \
         --logger "console;verbosity=normal" \
         --results-directory "$RESULTS_DIR" \
-        --filter "Category=Component" \
         || {
             log_error "Component tests failed"
             cleanup
@@ -210,20 +205,22 @@ show_help() {
     echo "  all             Run all stages (default)"
     echo "  build           Build the solution"
     echo "  unit-test       Run unit tests"
-    echo "  component-test  Run component tests (starts NATS container)"
+    echo "  component-test  Run component tests"
     echo "  validate        Validate .gitlab-ci.yml syntax"
     echo "  help            Show this help message"
     echo ""
+    echo "Environment Variables:"
+    echo "  NATS_URL    NATS server URL (default: nats://localhost:4222)"
+    echo "  JWT_TOKEN   JWT token for NATS authentication (optional)"
+    echo ""
     echo "Examples:"
-    echo "  $0              # Run all stages"
-    echo "  $0 build        # Build only"
-    echo "  $0 component-test  # Run component tests"
+    echo "  $0                                    # Run all stages"
+    echo "  $0 unit-test                          # Run unit tests only"
+    echo "  NATS_URL=nats://192.168.1.100:4222 $0 component-test"
 }
 
-# Trap to ensure cleanup on exit
 trap cleanup EXIT
 
-# Main
 case "${1:-all}" in
     all)
         run_all

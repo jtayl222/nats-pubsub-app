@@ -1,16 +1,16 @@
-using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NUnit.Framework;
 
-namespace NatsHttpGateway.Tests.Component;
+namespace NatsHttpGateway.ComponentTests;
 
 /// <summary>
 /// Base class for component tests that run against a real NATS JetStream server.
 /// Provides WebApplicationFactory for API testing and direct NATS connection for verification.
+///
+/// Supports JWT authentication via the JWT_TOKEN environment variable.
 /// </summary>
 [TestFixture]
 [Category("Component")]
@@ -23,6 +23,7 @@ public abstract class NatsComponentTestBase
     protected string TestStreamName = null!;
 
     private static string NatsUrl => Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
+    private static string? JwtToken => Environment.GetEnvironmentVariable("JWT_TOKEN");
 
     [OneTimeSetUp]
     public async Task GlobalSetup()
@@ -30,26 +31,63 @@ public abstract class NatsComponentTestBase
         // Set environment variable for the test host (NatsService reads from configuration["NATS_URL"])
         Environment.SetEnvironmentVariable("NATS_URL", NatsUrl);
 
+        // Configure JWT_TOKEN for the web application if provided
+        if (!string.IsNullOrEmpty(JwtToken))
+        {
+            Environment.SetEnvironmentVariable("JWT_TOKEN", JwtToken);
+        }
+
         // Configure the web application to use the test NATS server
         Factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.ConfigureAppConfiguration((context, config) =>
                 {
-                    config.AddInMemoryCollection(new Dictionary<string, string?>
+                    var configValues = new Dictionary<string, string?>
                     {
                         ["NATS_URL"] = NatsUrl
-                    });
+                    };
+
+                    // Add JWT_TOKEN to configuration if provided
+                    if (!string.IsNullOrEmpty(JwtToken))
+                    {
+                        configValues["JWT_TOKEN"] = JwtToken;
+                    }
+
+                    config.AddInMemoryCollection(configValues);
                 });
             });
 
         Client = Factory.CreateClient();
 
         // Direct NATS connection for test setup/verification
-        var opts = new NatsOpts { Url = NatsUrl };
+        var opts = CreateNatsOpts();
         NatsConnection = new NatsConnection(opts);
         await NatsConnection.ConnectAsync();
         JetStream = new NatsJSContext(NatsConnection);
+    }
+
+    /// <summary>
+    /// Creates NatsOpts with JWT authentication if JWT_TOKEN is provided.
+    /// </summary>
+    private static NatsOpts CreateNatsOpts()
+    {
+        var opts = new NatsOpts { Url = NatsUrl };
+
+        if (!string.IsNullOrEmpty(JwtToken))
+        {
+            // Configure JWT authentication
+            opts = opts with
+            {
+                AuthOpts = new NatsAuthOpts
+                {
+                    Jwt = JwtToken
+                }
+            };
+            TestContext.WriteLine($"Using JWT authentication for NATS connection");
+        }
+
+        return opts;
     }
 
     [SetUp]

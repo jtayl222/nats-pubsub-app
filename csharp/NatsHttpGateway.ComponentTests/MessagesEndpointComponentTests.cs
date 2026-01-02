@@ -1,13 +1,12 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using NATS.Client.JetStream.Models;
 using NUnit.Framework;
 
-namespace NatsHttpGateway.Tests.Component;
+namespace NatsHttpGateway.ComponentTests;
 
 /// <summary>
 /// Component tests for the /api/messages endpoints with a live NATS connection.
@@ -192,8 +191,15 @@ public class MessagesEndpointComponentTests : NatsComponentTestBase
     }
 
     [Test]
+    [Category("RequiresDocker")]
     public async Task VerifyWithNatsBox_PublishedMessageVisible()
     {
+        // Skip if Docker is not available
+        if (!await IsDockerAvailableAsync())
+        {
+            Assert.Ignore("Docker is not available - skipping nats-box verification test");
+        }
+
         // Arrange
         await JetStream.CreateStreamAsync(new StreamConfig(TestStreamName, new[] { $"{TestStreamName}.>" }));
 
@@ -224,8 +230,15 @@ public class MessagesEndpointComponentTests : NatsComponentTestBase
     }
 
     [Test]
+    [Category("RequiresDocker")]
     public async Task VerifyWithNatsBox_StreamExists()
     {
+        // Skip if Docker is not available
+        if (!await IsDockerAvailableAsync())
+        {
+            Assert.Ignore("Docker is not available - skipping nats-box verification test");
+        }
+
         // Arrange
         await JetStream.CreateStreamAsync(new StreamConfig(TestStreamName, new[] { $"{TestStreamName}.>" }));
 
@@ -242,8 +255,15 @@ public class MessagesEndpointComponentTests : NatsComponentTestBase
     }
 
     [Test]
+    [Category("RequiresDocker")]
     public async Task VerifyWithNatsBox_StreamInfo()
     {
+        // Skip if Docker is not available
+        if (!await IsDockerAvailableAsync())
+        {
+            Assert.Ignore("Docker is not available - skipping nats-box verification test");
+        }
+
         // Arrange
         await JetStream.CreateStreamAsync(new StreamConfig(TestStreamName, new[] { $"{TestStreamName}.>" }));
 
@@ -265,24 +285,71 @@ public class MessagesEndpointComponentTests : NatsComponentTestBase
     }
 
     /// <summary>
+    /// Checks if Docker is available and running.
+    /// </summary>
+    private static async Task<bool> IsDockerAvailableAsync()
+    {
+        try
+        {
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "docker",
+                    Arguments = "info",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            await process.WaitForExitAsync();
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Runs a nats CLI command using nats-box Docker container
     /// </summary>
     private async Task<string> RunNatsBoxCommandAsync(string command)
     {
+        var natsUrl = Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
+        var jwtToken = Environment.GetEnvironmentVariable("JWT_TOKEN");
+
+        // Build the nats command with optional JWT authentication
+        var natsCommand = string.IsNullOrEmpty(jwtToken)
+            ? $"nats -s {natsUrl.Replace("localhost", "host.docker.internal")} {command}"
+            : $"nats -s {natsUrl.Replace("localhost", "host.docker.internal")} --creds /dev/stdin {command}";
+
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName = "docker",
-                Arguments = $"run --rm --network host natsio/nats-box nats -s nats://host.docker.internal:4222 {command}",
+                Arguments = $"run --rm --network host natsio/nats-box {natsCommand}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = !string.IsNullOrEmpty(jwtToken),
                 UseShellExecute = false,
                 CreateNoWindow = true
             }
         };
 
         process.Start();
+
+        // If JWT token is provided, write it to stdin
+        if (!string.IsNullOrEmpty(jwtToken))
+        {
+            await process.StandardInput.WriteLineAsync(jwtToken);
+            process.StandardInput.Close();
+        }
+
         var output = await process.StandardOutput.ReadToEndAsync();
         var error = await process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();

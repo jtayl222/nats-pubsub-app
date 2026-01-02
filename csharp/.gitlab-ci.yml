@@ -78,6 +78,8 @@ component-test:
       command: ["--jetstream", "-m", "8222"]
   variables:
     NATS_URL: "nats://nats:4222"
+    # JWT_TOKEN can be set at the project/group level for authenticated NATS
+    # JWT_TOKEN: "${NATS_JWT_TOKEN}"
   script:
     # Wait for NATS to be ready
     - |
@@ -90,10 +92,13 @@ component-test:
         echo "Waiting... ($i/30)"
         sleep 1
       done
-    - dotnet test NatsHttpGateway.Tests/NatsHttpGateway.Tests.csproj
+    # Restore and build the component tests project
+    - dotnet restore NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj --packages .nuget/
+    - dotnet build NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj --configuration Release --no-restore
+    # Run component tests
+    - dotnet test NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj
         --configuration Release
         --no-build
-        --filter "Category=Component"
         --logger "trx;LogFileName=component-test-results.trx"
         --logger "console;verbosity=detailed"
         --results-directory ./results

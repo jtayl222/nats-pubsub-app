@@ -3,7 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using NUnit.Framework;
 
-namespace NatsHttpGateway.Tests.Component;
+namespace NatsHttpGateway.ComponentTests;
 
 /// <summary>
 /// Component tests for the /health endpoint with a live NATS connection.

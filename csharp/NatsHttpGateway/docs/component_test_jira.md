@@ -64,25 +64,40 @@ component-test:
 
 ### 2. Test Project Structure
 
-Add component tests to the existing `NatsHttpGateway.Tests` project using the `[Category("Component")]` attribute. This approach:
-- Keeps test infrastructure shared between unit and component tests
-- Uses NUnit categories to distinguish and filter test types
-- Avoids additional project configuration overhead
+Component tests are in a **separate project**: `NatsHttpGateway.ComponentTests`
+
+This approach:
+- Allows developers without Docker to skip component tests entirely
+- Clear separation of concerns between unit and integration testing
+- Supports different test runners and CI/CD configurations
+- Enables conditional execution based on environment capabilities
 
 ### 3. Test Execution
 
 ```yaml
 script:
-  - dotnet test NatsHttpGateway.Tests
-      --filter "Category=Component"
-      --logger "junit;LogFilePath=results/component-test-results.xml"
-      --collect:"XPlat Code Coverage"
+  - dotnet restore NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj
+  - dotnet build NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj --configuration Release
+  - dotnet test NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj
+      --configuration Release
+      --no-build
+      --logger "trx;LogFileName=component-test-results.trx"
+      --logger "console;verbosity=detailed"
+      --results-directory ./results
 artifacts:
   when: always
-  reports:
-    junit: results/component-test-results.xml
   paths:
     - results/
+```
+
+### 3.1 JWT Authentication Support
+
+Component tests support JWT authentication via environment variable:
+
+```yaml
+variables:
+  NATS_URL: "nats://nats:4222"
+  JWT_TOKEN: "${NATS_JWT_TOKEN}"  # Set at project/group level
 ```
 
 ### 4. Required Component Test Coverage
@@ -186,15 +201,44 @@ public abstract class NatsComponentTestBase
 
 ## Local Development Instructions
 
+### Using the Test Script (Recommended)
+
+```bash
+# Run component tests (handles Docker and NATS automatically)
+./scripts/test-gitlab-ci-local.sh component-test
+
+# Run all stages
+./scripts/test-gitlab-ci-local.sh all
+
+# Run only unit tests (no Docker required)
+./scripts/test-gitlab-ci-local.sh unit-test
+```
+
+### Manual Setup
+
 ```bash
 # Start NATS with JetStream
 docker run -d --name nats-component-test -p 4222:4222 -p 8222:8222 nats:latest --jetstream -m 8222
 
 # Run component tests
-cd NatsHttpGateway.Tests
+cd NatsHttpGateway.ComponentTests
 export NATS_URL="nats://localhost:4222"
-dotnet test --filter "Category=Component"
+dotnet test
 
 # Cleanup
 docker rm -f nats-component-test
 ```
+
+### JWT Authentication
+
+```bash
+# With JWT token
+export JWT_TOKEN=$(cat ~/.nats/my.jwt)
+./scripts/test-gitlab-ci-local.sh component-test
+```
+
+### Windows 11 Support
+
+For developers without Docker:
+1. Run unit tests only: `./scripts/test-gitlab-ci-local.sh unit-test`
+2. Or use an external NATS server: `NATS_URL=nats://server:4222 SKIP_DOCKER_CHECK=true ./scripts/test-gitlab-ci-local.sh component-test`
