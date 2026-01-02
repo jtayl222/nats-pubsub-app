@@ -92,3 +92,6 @@ app.MapGet("/", () => new
 app.Logger.LogInformation("NATS HTTP Gateway starting on {Urls}", string.Join(", ", builder.WebHost.GetSetting("urls")?.Split(';') ?? new[] { "http://localhost:5000" }));
 
 app.Run();
+
+// Make Program accessible for WebApplicationFactory in tests
+public partial class Program { }

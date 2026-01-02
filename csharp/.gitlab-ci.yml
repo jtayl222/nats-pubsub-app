@@ -1,0 +1,133 @@
+# GitLab CI/CD Pipeline for NatsHttpGateway
+# Designed for Linux runners with Docker executor
+
+variables:
+  DOTNET_VERSION: "8.0"
+  NATS_URL: "nats://nats:4222"
+  # Improve build performance
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_NOLOGO: "true"
+
+stages:
+  - build
+  - test
+  - component-test
+  - publish
+
+# Base template for .NET jobs
+.dotnet-base:
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  before_script:
+    - dotnet --info
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-dotnet"
+    paths:
+      - .nuget/
+    policy: pull-push
+
+# ------------------------------------------------------------------------------
+# BUILD STAGE
+# ------------------------------------------------------------------------------
+build:
+  extends: .dotnet-base
+  stage: build
+  script:
+    - dotnet restore NatsHttpGateway/NatsHttpGateway.sln --packages .nuget/
+    - dotnet build NatsHttpGateway/NatsHttpGateway.sln --configuration Release --no-restore
+  artifacts:
+    paths:
+      - "**/bin/Release/"
+      - "**/obj/"
+    expire_in: 1 hour
+
+# ------------------------------------------------------------------------------
+# UNIT TEST STAGE
+# ------------------------------------------------------------------------------
+unit-test:
+  extends: .dotnet-base
+  stage: test
+  needs:
+    - build
+  script:
+    - dotnet test NatsHttpGateway.Tests/NatsHttpGateway.Tests.csproj
+        --configuration Release
+        --no-build
+        --filter "Category!=Component"
+        --logger "trx;LogFileName=unit-test-results.trx"
+        --logger "console;verbosity=detailed"
+        --collect:"XPlat Code Coverage"
+        --results-directory ./results
+  artifacts:
+    when: always
+    paths:
+      - results/
+    expire_in: 1 week
+  coverage: '/Total\s*\|\s*(\d+\.?\d*%)/'
+
+# ------------------------------------------------------------------------------
+# COMPONENT TEST STAGE
+# ------------------------------------------------------------------------------
+component-test:
+  extends: .dotnet-base
+  stage: component-test
+  needs:
+    - build
+  services:
+    - name: nats:latest
+      alias: nats
+      command: ["--jetstream", "-m", "8222"]
+  variables:
+    NATS_URL: "nats://nats:4222"
+  script:
+    # Wait for NATS to be ready
+    - |
+      echo "Waiting for NATS JetStream to be ready..."
+      for i in $(seq 1 30); do
+        if curl -s http://nats:8222/healthz > /dev/null 2>&1; then
+          echo "NATS is ready!"
+          break
+        fi
+        echo "Waiting... ($i/30)"
+        sleep 1
+      done
+    - dotnet test NatsHttpGateway.Tests/NatsHttpGateway.Tests.csproj
+        --configuration Release
+        --no-build
+        --filter "Category=Component"
+        --logger "trx;LogFileName=component-test-results.trx"
+        --logger "console;verbosity=detailed"
+        --results-directory ./results
+  artifacts:
+    when: always
+    paths:
+      - results/
+    expire_in: 1 week
+  allow_failure: false
+
+# ------------------------------------------------------------------------------
+# DOCKER IMAGE PUBLISH STAGE
+# ------------------------------------------------------------------------------
+publish-image:
+  stage: publish
+  image: docker:24
+  services:
+    - docker:24-dind
+  needs:
+    - unit-test
+    - component-test
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE/nats-http-gateway:$CI_COMMIT_SHA -f NatsHttpGateway/Dockerfile .
+    - docker push $CI_REGISTRY_IMAGE/nats-http-gateway:$CI_COMMIT_SHA
+    - |
+      if [ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]; then
+        docker tag $CI_REGISTRY_IMAGE/nats-http-gateway:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE/nats-http-gateway:latest
+        docker push $CI_REGISTRY_IMAGE/nats-http-gateway:latest
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual

@@ -80,3 +80,4 @@ jetstream/
 # Temporary files
 *.tmp
 /tmp/
+results/
