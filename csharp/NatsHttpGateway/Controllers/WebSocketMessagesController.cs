@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NatsHttpGateway.Protos;
 using NatsHttpGateway.Services;
@@ -9,6 +10,7 @@ namespace NatsHttpGateway.Controllers;
 
 [ApiController]
 [Route("ws/[controller]")]
+[Authorize]
 public class WebSocketMessagesController : ControllerBase
 {
     private readonly INatsService _natsService;

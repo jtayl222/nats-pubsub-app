@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NATS.Client.JetStream;
 using NatsHttpGateway.Models;
@@ -8,6 +9,7 @@ namespace NatsHttpGateway.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[Authorize]
 public class MessagesController : ControllerBase
 {
     private readonly INatsService _natsService;

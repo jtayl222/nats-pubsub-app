@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NatsHttpGateway.Models;
 using NatsHttpGateway.Services;
@@ -10,6 +11,7 @@ namespace NatsHttpGateway.Controllers;
 [ApiController]
 [Route("api/consumers")]
 [Produces("application/json")]
+[Authorize]
 public class ConsumersController : ControllerBase
 {
     private readonly INatsService _natsService;

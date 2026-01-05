@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NatsHttpGateway.Models;
 using NatsHttpGateway.Services;
@@ -7,6 +8,7 @@ namespace NatsHttpGateway.Controllers;
 [ApiController]
 [Route("[controller]")]
 [Produces("application/json")]
+[AllowAnonymous]
 public class HealthController : ControllerBase
 {
     private readonly INatsService _natsService;

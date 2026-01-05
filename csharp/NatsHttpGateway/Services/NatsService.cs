@@ -1,9 +1,11 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
+using NatsHttpGateway.Configuration;
 using NatsHttpGateway.Models;
 
 namespace NatsHttpGateway.Services;
@@ -13,29 +15,81 @@ public class NatsService : INatsService, IDisposable
     private readonly NatsConnection _nats;
     private readonly INatsJSContext _js;
     private readonly ILogger<NatsService> _logger;
-    private readonly string _defaultStreamPrefix;
+    private readonly NatsOptions _options;
     private readonly Dictionary<string, string> _subjectToStreamMap = new();
     private bool _disposed = false;
 
-    public NatsService(IConfiguration configuration, ILogger<NatsService> logger)
+    public NatsService(IOptions<NatsOptions> options, ILogger<NatsService> logger)
     {
         _logger = logger;
-        var natsUrl = configuration["NATS_URL"] ?? "nats://localhost:4222";
-        _defaultStreamPrefix = configuration["STREAM_PREFIX"] ?? "events";
+        _options = options.Value;
 
         try
         {
-            var opts = new NatsOpts { Url = natsUrl };
+            var opts = new NatsOpts { Url = _options.Url };
+
+            // Configure mTLS if certificate files are provided
+            if (_options.IsMtlsEnabled)
+            {
+                opts = opts with { TlsOpts = CreateTlsOpts() };
+                _logger.LogInformation("NATS mTLS enabled with client certificate: {CertFile}", _options.CertFile);
+            }
+            else if (_options.IsTlsEnabled)
+            {
+                // TLS with CA verification only (no client cert)
+                opts = opts with { TlsOpts = CreateTlsOpts() };
+                _logger.LogInformation("NATS TLS enabled with CA verification: {CaFile}", _options.CaFile);
+            }
+
             _nats = new NatsConnection(opts);
             _nats.ConnectAsync().AsTask().Wait();
             _js = new NatsJSContext(_nats);
 
-            _logger.LogInformation("NATS Gateway connected to {NatsUrl}", natsUrl);
+            _logger.LogInformation("NATS Gateway connected to {NatsUrl}", _options.Url);
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"Failed to initialize NATS connection to {natsUrl}", ex);
+            throw new InvalidOperationException($"Failed to initialize NATS connection to {_options.Url}", ex);
         }
+    }
+
+    /// <summary>
+    /// Creates TLS options for NATS connection with optional mTLS (client certificate)
+    /// </summary>
+    private NatsTlsOpts CreateTlsOpts()
+    {
+        // Validate files exist before configuring
+        if (!string.IsNullOrEmpty(_options.CaFile) && !File.Exists(_options.CaFile))
+        {
+            throw new FileNotFoundException($"CA certificate file not found: {_options.CaFile}");
+        }
+        if (!string.IsNullOrEmpty(_options.CertFile) && !File.Exists(_options.CertFile))
+        {
+            throw new FileNotFoundException($"Client certificate file not found: {_options.CertFile}");
+        }
+        if (!string.IsNullOrEmpty(_options.KeyFile) && !File.Exists(_options.KeyFile))
+        {
+            throw new FileNotFoundException($"Client key file not found: {_options.KeyFile}");
+        }
+
+        var tlsOpts = new NatsTlsOpts
+        {
+            Mode = TlsMode.Require,
+            CaFile = _options.CaFile,
+            CertFile = _options.CertFile,
+            KeyFile = _options.KeyFile
+        };
+
+        if (!string.IsNullOrEmpty(_options.CaFile))
+        {
+            _logger.LogInformation("Loaded CA certificate from {CaFile}", _options.CaFile);
+        }
+        if (!string.IsNullOrEmpty(_options.CertFile))
+        {
+            _logger.LogInformation("Loaded client certificate from {CertFile}", _options.CertFile);
+        }
+
+        return tlsOpts;
     }
 
     public bool IsConnected => _nats.ConnectionState == NatsConnectionState.Open;
@@ -432,11 +486,11 @@ public class NatsService : INatsService, IDisposable
     {
         if (string.IsNullOrWhiteSpace(subject))
         {
-            return _defaultStreamPrefix;
+            return _options.StreamPrefix;
         }
 
         var parts = subject.Split('.', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length > 0 ? parts[0] : _defaultStreamPrefix;
+        return parts.Length > 0 ? parts[0] : _options.StreamPrefix;
     }
 
     /// <summary>

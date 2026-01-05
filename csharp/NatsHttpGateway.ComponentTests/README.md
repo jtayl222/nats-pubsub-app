@@ -34,6 +34,8 @@ A unit test for `MessagesController` mocks `INatsService` and verifies that when
 | Incorrect mock assumptions | ❌ | ✅ | ✅ |
 | NATS protocol/serialization issues | ❌ | ✅ | ✅ |
 | JetStream configuration problems | ❌ | ✅ | ✅ |
+| JWT authentication enforcement | ✅ | ✅ | ✅ |
+| mTLS certificate configuration | ❌ | ✅ | ✅ |
 | Infrastructure/network issues | ❌ | ❌ | ✅ |
 | Cross-service integration | ❌ | ❌ | ✅ |
 | Business workflow validation | ❌ | ❌ | ✅ |
@@ -243,37 +245,84 @@ public async Task PublishMessage_VerifyWithDirectNatsRead()
 
 - .NET 8.0 SDK
 - Access to NATS JetStream server (local Docker or Linux VM)
+- For full CI simulation: GitLab Runner (see [GITLAB_RUNNER_SETUP.md](../NatsHttpGateway/docs/GITLAB_RUNNER_SETUP.md))
 
-### Using the Test Script
+### Using GitLab Runner (Recommended)
+
+Uses `.gitlab-ci.yml` as single source of truth:
 
 ```bash
-# Run component tests (uses localhost:4222 by default)
-./scripts/test-gitlab-ci-local.sh component-test
-
-# Run against VM
-NATS_URL=nats://192.168.1.100:4222 ./scripts/test-gitlab-ci-local.sh component-test
-
-# Run all stages
-./scripts/test-gitlab-ci-local.sh all
-
-# Run unit tests only
-./scripts/test-gitlab-ci-local.sh unit-test
+# Run specific CI jobs locally
+gitlab-runner exec docker build
+gitlab-runner exec docker unit-test
+gitlab-runner exec docker security-test
+gitlab-runner exec docker component-test
 ```
 
-### Manual Execution
+### Direct Execution
 
 ```bash
-cd NatsHttpGateway.ComponentTests
+# Set NATS URL (default: localhost:4222)
 export NATS_URL="nats://localhost:4222"  # or nats://<VM-IP>:4222
-dotnet test
+
+# Run component tests
+dotnet test NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj \
+  --filter "Category=Component"
 ```
 
-### With JWT Authentication
+### Windows (PowerShell)
+
+```powershell
+$env:NATS_URL = "nats://192.168.56.101:4222"
+dotnet test NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj `
+  --filter "Category=Component"
+```
+
+### With JWT API Authentication
+
+The gateway supports optional JWT Bearer token authentication for REST API endpoints. To run component tests with JWT enabled:
 
 ```bash
-export JWT_TOKEN=$(cat ~/.nats/credentials.jwt)
-./scripts/test-gitlab-ci-local.sh component-test
+# Set JWT configuration (enables authentication)
+export JWT_KEY="your-secret-key-minimum-32-characters"
+export JWT_ISSUER="your-issuer"
+export JWT_AUDIENCE="nats-gateway"
+
+# Provide a pre-generated API token for test requests
+export API_TOKEN="eyJhbGciOiJIUzI1NiIs..."
+
+# Run tests
+dotnet test --filter "Category=Component"
 ```
+
+#### Running Security-Specific Tests
+
+```bash
+# Run security tests only (tests JWT authentication scenarios)
+dotnet test --filter "Category=Security"
+```
+
+Security tests cover:
+- Protected endpoints return 401 without token
+- Invalid/expired tokens are rejected
+- Health endpoint allows anonymous access
+- Valid tokens grant access to protected endpoints
+
+> **Note:** Security tests use a mock NatsService to isolate JWT authentication testing from NATS connectivity. See `SecurityComponentTests.cs` for implementation details.
+
+### With NATS mTLS
+
+For testing with NATS mTLS (client certificates):
+
+```bash
+export NATS_URL="nats://localhost:4222"
+export NATS_CA_FILE="/path/to/rootCA.pem"
+export NATS_CERT_FILE="/path/to/client.crt"
+export NATS_KEY_FILE="/path/to/client.key"
+dotnet test --filter "Category=Component"
+```
+
+> See [../NatsHttpGateway/SECURITY.md](../NatsHttpGateway/SECURITY.md) for complete security configuration guide including certificate generation.
 
 ### nats-box Verification Tests
 

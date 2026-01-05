@@ -1,7 +1,15 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Net.Http.Headers;
+using System.Security.Claims;
+using System.Text;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
+using NatsHttpGateway.Configuration;
 using NUnit.Framework;
 
 namespace NatsHttpGateway.ComponentTests;
@@ -10,7 +18,11 @@ namespace NatsHttpGateway.ComponentTests;
 /// Base class for component tests that run against a real NATS JetStream server.
 /// Provides WebApplicationFactory for API testing and direct NATS connection for verification.
 ///
-/// Supports JWT authentication via the JWT_TOKEN environment variable.
+/// Configuration is loaded from appsettings.json with environment variable overrides using IOptions pattern.
+/// JWT is always enabled for component tests to allow authenticated API requests.
+/// Supports dual security layers:
+/// - REST API: JWT authentication (auto-configured for tests)
+/// - NATS: mTLS via Nats section
 /// </summary>
 [TestFixture]
 [Category("Component")]
@@ -22,72 +34,165 @@ public abstract class NatsComponentTestBase
     protected INatsJSContext JetStream = null!;
     protected string TestStreamName = null!;
 
-    private static string NatsUrl => Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
-    private static string? JwtToken => Environment.GetEnvironmentVariable("JWT_TOKEN");
+    // Test JWT configuration - always enabled for component tests
+    protected const string TestJwtKey = "component-test-jwt-secret-key-min-32-chars!!";
+    protected const string TestJwtIssuer = "component-test-issuer";
+    protected const string TestJwtAudience = "component-test-audience";
+
+    // Configuration loaded from appsettings.json + environment variables
+    private static IConfiguration? _configuration;
+    protected static IConfiguration Configuration => _configuration ??= BuildConfiguration();
+
+    // Strongly-typed options
+    private static NatsOptions? _natsOptions;
+    protected static NatsOptions NatsConfig => _natsOptions ??= BuildNatsOptions();
+
+    private static IConfiguration BuildConfiguration()
+    {
+        return new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
+            .AddEnvironmentVariables()
+            .Build();
+    }
+
+    private static NatsOptions BuildNatsOptions()
+    {
+        var options = new NatsOptions();
+        Configuration.GetSection(NatsOptions.SectionName).Bind(options);
+
+        // Environment variables override
+        options.Url = Configuration["NATS_URL"] ?? options.Url;
+        options.StreamPrefix = Configuration["STREAM_PREFIX"] ?? options.StreamPrefix;
+        options.CaFile = Configuration["NATS_CA_FILE"] ?? options.CaFile;
+        options.CertFile = Configuration["NATS_CERT_FILE"] ?? options.CertFile;
+        options.KeyFile = Configuration["NATS_KEY_FILE"] ?? options.KeyFile;
+
+        return options;
+    }
+
+    /// <summary>
+    /// Generates a valid JWT token for component test API requests.
+    /// </summary>
+    protected static string GenerateTestToken(TimeSpan? expiry = null)
+    {
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestJwtKey));
+        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, "component-test-user"),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim("name", "Component Test User")
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: TestJwtIssuer,
+            audience: TestJwtAudience,
+            claims: claims,
+            expires: DateTime.UtcNow.Add(expiry ?? TimeSpan.FromHours(1)),
+            signingCredentials: credentials
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
 
     [OneTimeSetUp]
     public async Task GlobalSetup()
     {
-        // Set environment variable for the test host (NatsService reads from configuration["NATS_URL"])
-        Environment.SetEnvironmentVariable("NATS_URL", NatsUrl);
+        TestContext.WriteLine($"Loading configuration from: {Path.Combine(AppContext.BaseDirectory, "appsettings.json")}");
 
-        // Configure JWT_TOKEN for the web application if provided
-        if (!string.IsNullOrEmpty(JwtToken))
+        // CRITICAL: Set environment variables BEFORE creating WebApplicationFactory
+        // Program.cs reads these at startup to configure JWT authentication
+        Environment.SetEnvironmentVariable("JWT_KEY", TestJwtKey);
+        Environment.SetEnvironmentVariable("JWT_ISSUER", TestJwtIssuer);
+        Environment.SetEnvironmentVariable("JWT_AUDIENCE", TestJwtAudience);
+        Environment.SetEnvironmentVariable("NATS_URL", NatsConfig.Url);
+
+        if (NatsConfig.IsTlsEnabled)
+            Environment.SetEnvironmentVariable("NATS_CA_FILE", NatsConfig.CaFile);
+        if (NatsConfig.IsMtlsEnabled)
         {
-            Environment.SetEnvironmentVariable("JWT_TOKEN", JwtToken);
+            Environment.SetEnvironmentVariable("NATS_CERT_FILE", NatsConfig.CertFile);
+            Environment.SetEnvironmentVariable("NATS_KEY_FILE", NatsConfig.KeyFile);
         }
 
-        // Configure the web application to use the test NATS server
+        // Configure the web application with test settings
         Factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
-                builder.ConfigureAppConfiguration((context, config) =>
+                builder.ConfigureServices(services =>
                 {
-                    var configValues = new Dictionary<string, string?>
+                    // Override NATS options with test configuration
+                    services.Configure<NatsOptions>(opts =>
                     {
-                        ["NATS_URL"] = NatsUrl
-                    };
+                        opts.Url = NatsConfig.Url;
+                        opts.StreamPrefix = NatsConfig.StreamPrefix;
+                        opts.CaFile = NatsConfig.CaFile;
+                        opts.CertFile = NatsConfig.CertFile;
+                        opts.KeyFile = NatsConfig.KeyFile;
+                    });
 
-                    // Add JWT_TOKEN to configuration if provided
-                    if (!string.IsNullOrEmpty(JwtToken))
+                    // Override JWT options
+                    services.Configure<JwtOptions>(opts =>
                     {
-                        configValues["JWT_TOKEN"] = JwtToken;
-                    }
-
-                    config.AddInMemoryCollection(configValues);
+                        opts.Key = TestJwtKey;
+                        opts.Issuer = TestJwtIssuer;
+                        opts.Audience = TestJwtAudience;
+                    });
                 });
             });
 
         Client = Factory.CreateClient();
 
-        // Direct NATS connection for test setup/verification
+        // Generate and set test JWT token for authenticated API requests
+        var testToken = GenerateTestToken();
+        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", testToken);
+        TestContext.WriteLine("Using auto-generated JWT Bearer token for API requests");
+
+        // Direct NATS connection for test setup/verification (with mTLS support)
         var opts = CreateNatsOpts();
         NatsConnection = new NatsConnection(opts);
         await NatsConnection.ConnectAsync();
         JetStream = new NatsJSContext(NatsConnection);
+
+        TestContext.WriteLine($"Connected to NATS at {NatsConfig.Url}");
     }
 
     /// <summary>
-    /// Creates NatsOpts with JWT authentication if JWT_TOKEN is provided.
+    /// Creates NatsOpts with mTLS if certificate files are provided.
     /// </summary>
     private static NatsOpts CreateNatsOpts()
     {
-        var opts = new NatsOpts { Url = NatsUrl };
+        var opts = new NatsOpts { Url = NatsConfig.Url };
 
-        if (!string.IsNullOrEmpty(JwtToken))
+        // Configure mTLS if certificate files are provided
+        if (NatsConfig.IsMtlsEnabled)
         {
-            // Configure JWT authentication
-            opts = opts with
-            {
-                AuthOpts = new NatsAuthOpts
-                {
-                    Jwt = JwtToken
-                }
-            };
-            TestContext.WriteLine($"Using JWT authentication for NATS connection");
+            opts = opts with { TlsOpts = CreateTlsOpts() };
+            TestContext.WriteLine($"Using mTLS for NATS connection (cert: {NatsConfig.CertFile})");
+        }
+        else if (NatsConfig.IsTlsEnabled)
+        {
+            opts = opts with { TlsOpts = CreateTlsOpts() };
+            TestContext.WriteLine($"Using TLS with CA verification for NATS connection");
         }
 
         return opts;
+    }
+
+    /// <summary>
+    /// Creates TLS options for NATS connection with optional mTLS.
+    /// </summary>
+    private static NatsTlsOpts CreateTlsOpts()
+    {
+        return new NatsTlsOpts
+        {
+            Mode = TlsMode.Require,
+            CaFile = NatsConfig.CaFile,
+            CertFile = NatsConfig.CertFile,
+            KeyFile = NatsConfig.KeyFile
+        };
     }
 
     [SetUp]

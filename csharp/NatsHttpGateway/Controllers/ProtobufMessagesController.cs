@@ -1,4 +1,5 @@
 using Google.Protobuf;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NatsHttpGateway.Models;
 using NatsHttpGateway.Protos;
@@ -8,6 +9,7 @@ namespace NatsHttpGateway.Controllers;
 
 [ApiController]
 [Route("api/proto/[controller]")]
+[Authorize]
 public class ProtobufMessagesController : ControllerBase
 {
     private readonly INatsService _natsService;

@@ -81,3 +81,45 @@ jetstream/
 *.tmp
 /tmp/
 results/
+
+# ===========================================
+# SECURITY - DO NOT REMOVE THESE ENTRIES
+# ===========================================
+
+# Private keys and certificates
+*.key
+*.pem
+*.crt
+*.p12
+*.cer
+# Note: *.pfx already listed above
+
+# Test certificates directory
+test-certs/
+**/test-certs/
+
+# Credential and secret files
+credentials.json
+secrets.json
+*-secrets.json
+*-credentials.json
+
+# Environment-specific configs (may contain secrets/internal IPs)
+# Use .example files as templates (those ARE safe to commit)
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/appsettings.Staging.json
+**/appsettings.Local.json
+!**/*.example
+
+# Shell scripts with secrets
+test-env.sh
+*-env.sh
+set-env.sh
+
+# C# scripts (may contain token generation)
+*.csx
+
+# JWT tokens
+*.jwt
+tokens.txt

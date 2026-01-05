@@ -1,0 +1,15 @@
+{
+  "Nats": {
+    "Url": "nats://YOUR_NATS_HOST:4222",
+    "StreamPrefix": "EVENTS",
+    "CaFile": "/path/to/rootCA.pem",
+    "CertFile": "/path/to/client.crt",
+    "KeyFile": "/path/to/client.key"
+  },
+
+  "Jwt": {
+    "Key": "YOUR_JWT_SECRET_KEY_MIN_32_CHARACTERS_LONG",
+    "Issuer": "your-issuer",
+    "Audience": "your-audience"
+  }
+}

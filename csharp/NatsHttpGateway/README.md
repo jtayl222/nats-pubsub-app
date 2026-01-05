@@ -13,6 +13,8 @@ HTTP/REST gateway for NATS JetStream messaging. Provides stateless HTTP endpoint
 - ✅ **Durable Consumers** - Support for both ephemeral and durable consumers
 - ✅ **Swagger/OpenAPI** - Interactive API documentation
 - ✅ **Health Checks** - Monitor NATS connectivity
+- ✅ **JWT Authentication** - Optional Bearer token validation for REST API
+- ✅ **mTLS Support** - Optional mutual TLS for NATS connections
 
 ## Architecture
 
@@ -344,6 +346,19 @@ Use this harness after local changes or before deployments to ensure the HTTP ga
 | `NATS_URL` | `nats://localhost:4222` | NATS server connection URL |
 | `STREAM_PREFIX` | `events` | Default stream name prefix |
 | `ASPNETCORE_URLS` | `http://+:8080` | HTTP listening URLs |
+
+#### Security Configuration (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JWT_KEY` | (none) | JWT signing key (enables authentication when set) |
+| `JWT_ISSUER` | (none) | Expected JWT issuer |
+| `JWT_AUDIENCE` | (none) | Expected JWT audience |
+| `NATS_CA_FILE` | (none) | Path to CA certificate for NATS TLS |
+| `NATS_CERT_FILE` | (none) | Path to client certificate for NATS mTLS |
+| `NATS_KEY_FILE` | (none) | Path to client key for NATS mTLS |
+
+> **Note:** See [SECURITY.md](SECURITY.md) for complete security configuration guide including JWT token generation and mTLS certificate setup.
 
 ### Stream Naming Convention
 
