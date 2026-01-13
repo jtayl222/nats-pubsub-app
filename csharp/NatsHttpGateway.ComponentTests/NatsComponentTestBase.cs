@@ -3,22 +3,19 @@ using Microsoft.Extensions.Configuration;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NUnit.Framework;
-using Testcontainers.Nats;
 
 namespace NatsHttpGateway.ComponentTests;
 
 /// <summary>
-/// Base class for component tests that run against NATS JetStream.
+/// Base class for component tests that run against a real NATS JetStream server.
+/// Provides WebApplicationFactory for API testing and direct NATS connection for verification.
 ///
-/// By default, spins up a NATS container using Testcontainers for isolated, reproducible tests.
-/// Set USE_EXTERNAL_NATS=true to use an external NATS server instead (for CI or local development).
+/// Supports JWT authentication via the JWT_TOKEN environment variable.
 /// </summary>
 [TestFixture]
 [Category("Component")]
 public abstract class NatsComponentTestBase
 {
-    private NatsContainer? _natsContainer;
-
     protected WebApplicationFactory<Program> Factory = null!;
     protected HttpClient Client = null!;
     protected NatsConnection NatsConnection = null!;
@@ -26,45 +23,25 @@ public abstract class NatsComponentTestBase
     protected string TestStreamName = null!;
     protected string NatsUrl = null!;
 
-    private static bool UseExternalNats =>
-        Environment.GetEnvironmentVariable("USE_EXTERNAL_NATS")?.ToLower() == "true";
-
-    private static string ExternalNatsUrl =>
-        Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
-
-    private static string? JwtToken =>
-        Environment.GetEnvironmentVariable("JWT_TOKEN");
+    private static string ConfiguredNatsUrl => Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
+    private static string? JwtToken => Environment.GetEnvironmentVariable("JWT_TOKEN");
 
     [OneTimeSetUp]
     public async Task GlobalSetup()
     {
-        if (UseExternalNats)
-        {
-            NatsUrl = ExternalNatsUrl;
-            TestContext.WriteLine($"Using external NATS server: {NatsUrl}");
-        }
-        else
-        {
-            // Start NATS container with JetStream enabled
-            _natsContainer = new NatsBuilder()
-                .WithImage("nats:2.10-alpine")
-                .WithCommand("--jetstream")
-                .Build();
+        NatsUrl = ConfiguredNatsUrl;
+        TestContext.WriteLine($"Using NATS server: {NatsUrl}");
 
-            await _natsContainer.StartAsync();
-            NatsUrl = _natsContainer.GetConnectionString();
-            TestContext.WriteLine($"Started NATS container: {NatsUrl}");
-        }
-
-        // Set environment variable for the web application
+        // Set environment variable for the test host (NatsService reads from configuration["NATS_URL"])
         Environment.SetEnvironmentVariable("NATS_URL", NatsUrl);
 
+        // Configure JWT_TOKEN for the web application if provided
         if (!string.IsNullOrEmpty(JwtToken))
         {
             Environment.SetEnvironmentVariable("JWT_TOKEN", JwtToken);
         }
 
-        // Configure the web application
+        // Configure the web application to use the test NATS server
         Factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
@@ -75,6 +52,7 @@ public abstract class NatsComponentTestBase
                         ["NATS_URL"] = NatsUrl
                     };
 
+                    // Add JWT_TOKEN to configuration if provided
                     if (!string.IsNullOrEmpty(JwtToken))
                     {
                         configValues["JWT_TOKEN"] = JwtToken;
@@ -86,7 +64,7 @@ public abstract class NatsComponentTestBase
 
         Client = Factory.CreateClient();
 
-        // Create direct NATS connection for test setup/verification
+        // Direct NATS connection for test setup/verification
         var opts = CreateNatsOpts();
         NatsConnection = new NatsConnection(opts);
         await NatsConnection.ConnectAsync();
@@ -96,15 +74,22 @@ public abstract class NatsComponentTestBase
         await WaitForNatsReadyAsync();
     }
 
-    private NatsOpts CreateNatsOpts()
+    /// <summary>
+    /// Creates NatsOpts with JWT authentication if JWT_TOKEN is provided.
+    /// </summary>
+    private static NatsOpts CreateNatsOpts()
     {
-        var opts = new NatsOpts { Url = NatsUrl };
+        var opts = new NatsOpts { Url = ConfiguredNatsUrl };
 
-        if (!string.IsNullOrEmpty(JwtToken) && UseExternalNats)
+        if (!string.IsNullOrEmpty(JwtToken))
         {
+            // Configure JWT authentication
             opts = opts with
             {
-                AuthOpts = new NatsAuthOpts { Jwt = JwtToken }
+                AuthOpts = new NatsAuthOpts
+                {
+                    Jwt = JwtToken
+                }
             };
             TestContext.WriteLine("Using JWT authentication for NATS connection");
         }
@@ -178,16 +163,11 @@ public abstract class NatsComponentTestBase
         {
             await NatsConnection.DisposeAsync();
         }
-
-        if (_natsContainer != null)
-        {
-            await _natsContainer.DisposeAsync();
-            TestContext.WriteLine("NATS container stopped");
-        }
     }
 
     /// <summary>
     /// Helper for eventual consistency - retries a condition until it passes or times out.
+    /// Use this when assertions may need to wait for NATS to propagate state.
     /// </summary>
     protected async Task WaitForAsync(Func<Task<bool>> condition, TimeSpan? timeout = null)
     {

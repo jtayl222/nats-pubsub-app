@@ -85,7 +85,8 @@ NatsHttpGateway/
 └── Protos/              # Protocol Buffer definitions
 
 NatsHttpGateway.ComponentTests/
-├── NatsComponentTestBase.cs       # Base class with Testcontainers setup
+├── README.md                      # Component test documentation
+├── NatsComponentTestBase.cs       # Base class with test infrastructure
 ├── HealthEndpointComponentTests.cs
 └── MessagesEndpointComponentTests.cs
 ```
@@ -94,20 +95,24 @@ NatsHttpGateway.ComponentTests/
 
 ### Component Tests
 
-Uses [Testcontainers](https://dotnet.testcontainers.org/) to spin up an isolated NATS container per test run.
+Requires access to a NATS JetStream server. Uses GitLab CI services for pipeline execution.
+
+**Verification Strategy:** Tests publish via HTTP API, then verify by reading directly from NATS using the C# NATS.Client library.
 
 ```bash
-# Default - uses Testcontainers (requires Docker)
-dotnet test NatsHttpGateway.ComponentTests
+# Using the test script (recommended - handles NATS container lifecycle)
+./scripts/test-gitlab-ci-local.sh component-test
 
-# With external NATS server
-USE_EXTERNAL_NATS=true NATS_URL=nats://localhost:4222 dotnet test NatsHttpGateway.ComponentTests
+# Run all stages (build, unit-test, component-test)
+./scripts/test-gitlab-ci-local.sh all
+
+# Manual execution (requires NATS running)
+NATS_URL=nats://localhost:4222 dotnet test NatsHttpGateway.ComponentTests
 ```
 
 **Environment Variables:**
 | Variable | Description |
 |----------|-------------|
-| `USE_EXTERNAL_NATS` | Set to `true` to use external NATS instead of Testcontainers |
 | `NATS_URL` | NATS server URL (default: `nats://localhost:4222`) |
 | `JWT_TOKEN` | Optional JWT token for authenticated NATS connections |
 
@@ -115,3 +120,4 @@ USE_EXTERNAL_NATS=true NATS_URL=nats://localhost:4222 dotnet test NatsHttpGatewa
 - Each test gets a unique stream name (`TEST_{guid}`) for isolation
 - Streams are cleaned up in `TearDown`
 - Tests use shared models from `NatsHttpGateway.Models`
+- Direct NATS verification confirms messages are correctly stored
