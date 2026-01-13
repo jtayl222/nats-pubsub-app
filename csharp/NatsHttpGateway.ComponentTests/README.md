@@ -260,7 +260,7 @@ dotnet test
 ### With JWT Authentication
 
 ```bash
-export JWT_TOKEN=$(cat ~/.nats/credentials.jwt)
+export GATEWAY_JWT_TOKEN=$(cat ~/.nats/credentials.jwt)
 ./scripts/test-gitlab-ci-local.sh component-test
 ```
 
@@ -307,6 +307,15 @@ public class NewFeatureComponentTests : NatsComponentTestBase
 2. **Verify end-to-end**: Publish via API, then read directly from NATS to confirm
 3. **Test both directions**: API→NATS and NATS→API
 
+### Common Pitfalls
+
+| Pitfall | Why It Matters | Solution |
+|---------|---------------|----------|
+| Hardcoded stream names | Tests conflict in parallel | Use `Guid.NewGuid()` in stream names |
+| Not cleaning up streams | Artifacts affect subsequent runs | Delete in `[TearDown]` |
+| Assuming immediate consistency | JetStream may have slight delays | Use `WaitForAsync()` helper |
+| Testing only happy paths | Miss error handling issues | Include validation/error tests |
+
 ---
 
 ## Code Coverage Strategy
@@ -344,6 +353,42 @@ public class NewFeatureComponentTests : NatsComponentTestBase
 1. Write a failing component test that reproduces it
 2. Fix the bug
 3. The test now guards against regression
+
+---
+
+## Test Priority Matrix
+
+| Test Area | Endpoints | Priority | Why |
+|-----------|-----------|----------|-----|
+| Message round-trip | `/api/messages/*` | Critical | Core functionality |
+| Consumer acknowledgment | `/api/consumers/*` | Critical | Data loss prevention |
+| Consumer reset | `/api/consumers/*/reset` | Critical | Recovery operations |
+| Stream operations | `/api/streams/*` | High | Foundation for other features |
+| Protobuf messages | `/api/proto/*` | High | Binary protocol correctness |
+| Health endpoint | `/health` | Medium | Orchestration accuracy |
+| WebSocket streaming | `/ws/*` | Medium | Real-time features |
+
+---
+
+## Platform Notes
+
+### Windows 11
+
+For developers on Windows 11:
+
+1. **With Docker Desktop**: Install Docker Desktop with WSL 2 backend, then run tests via Git Bash or WSL
+2. **Without Docker**: Run unit tests only with `./scripts/test-gitlab-ci-local.sh unit-test`
+3. **External NATS**: Use `NATS_URL=nats://server:4222 SKIP_DOCKER_CHECK=true ./scripts/test-gitlab-ci-local.sh component-test`
+
+---
+
+## Dependencies
+
+- .NET 8.0 SDK
+- NUnit 4.x, Microsoft.AspNetCore.Mvc.Testing 8.0
+- NATS.Net client library
+- Docker (for local NATS container) or access to external NATS server
+- GitLab Runner with Docker executor (for CI/CD)
 
 ---
 

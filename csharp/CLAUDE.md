@@ -114,7 +114,7 @@ NATS_URL=nats://localhost:4222 dotnet test NatsHttpGateway.ComponentTests
 | Variable | Description |
 |----------|-------------|
 | `NATS_URL` | NATS server URL (default: `nats://localhost:4222`) |
-| `JWT_TOKEN` | Optional JWT token for authenticated NATS connections |
+| `GATEWAY_JWT_TOKEN` | Optional JWT token for authenticated NATS connections |
 
 **Test Conventions:**
 - Each test gets a unique stream name (`TEST_{guid}`) for isolation

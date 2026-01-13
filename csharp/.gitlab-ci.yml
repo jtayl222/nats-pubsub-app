@@ -78,8 +78,8 @@ component-test:
       command: ["--jetstream", "-m", "8222"]
   variables:
     NATS_URL: "nats://nats:4222"
-    # JWT_TOKEN can be set at the project/group level for authenticated NATS
-    # JWT_TOKEN: "${NATS_JWT_TOKEN}"
+    # GATEWAY_JWT_TOKEN can be set at the project/group level for authenticated NATS
+    # GATEWAY_JWT_TOKEN: "${NATS_GATEWAY_JWT_TOKEN}"
   script:
     # Wait for NATS to be ready
     - |

@@ -10,7 +10,7 @@ namespace NatsHttpGateway.ComponentTests;
 /// Base class for component tests that run against a real NATS JetStream server.
 /// Provides WebApplicationFactory for API testing and direct NATS connection for verification.
 ///
-/// Supports JWT authentication via the JWT_TOKEN environment variable.
+/// Configuration is loaded from NatsHttpGateway/appsettings.json with environment variable overrides.
 /// </summary>
 [TestFixture]
 [Category("Component")]
@@ -23,8 +23,57 @@ public abstract class NatsComponentTestBase
     protected string TestStreamName = null!;
     protected string NatsUrl = null!;
 
-    private static string ConfiguredNatsUrl => Environment.GetEnvironmentVariable("NATS_URL") ?? "nats://localhost:4222";
-    private static string? JwtToken => Environment.GetEnvironmentVariable("JWT_TOKEN");
+    private static IConfiguration? _configuration;
+
+    /// <summary>
+    /// Loads configuration from appsettings.json with environment variable overrides.
+    /// Environment variables take precedence over appsettings values.
+    /// </summary>
+    private static IConfiguration Configuration
+    {
+        get
+        {
+            if (_configuration == null)
+            {
+                // Find the solution root by looking for the NatsHttpGateway directory
+                // Start from the assembly location and walk up until we find it
+                var assemblyDir = Path.GetDirectoryName(typeof(NatsComponentTestBase).Assembly.Location)!;
+                var searchDir = assemblyDir;
+                string? appSettingsPath = null;
+
+                // Walk up the directory tree looking for NatsHttpGateway/appsettings.json
+                for (int i = 0; i < 10 && searchDir != null; i++)
+                {
+                    var candidate = Path.Combine(searchDir, "NatsHttpGateway", "appsettings.json");
+                    if (File.Exists(candidate))
+                    {
+                        appSettingsPath = candidate;
+                        break;
+                    }
+                    searchDir = Path.GetDirectoryName(searchDir);
+                }
+
+                var builder = new ConfigurationBuilder();
+
+                if (appSettingsPath != null)
+                {
+                    var appSettingsDir = Path.GetDirectoryName(appSettingsPath)!;
+                    builder
+                        .SetBasePath(appSettingsDir)
+                        .AddJsonFile("appsettings.json", optional: true)
+                        .AddJsonFile("appsettings.Development.json", optional: true);
+                }
+
+                _configuration = builder
+                    .AddEnvironmentVariables()
+                    .Build();
+            }
+            return _configuration;
+        }
+    }
+
+    private static string ConfiguredNatsUrl => Configuration["NATS_URL"] ?? "nats://localhost:4222";
+    private static string? JwtToken => Configuration["GATEWAY_JWT_TOKEN"];
 
     [OneTimeSetUp]
     public async Task GlobalSetup()
@@ -35,10 +84,10 @@ public abstract class NatsComponentTestBase
         // Set environment variable for the test host (NatsService reads from configuration["NATS_URL"])
         Environment.SetEnvironmentVariable("NATS_URL", NatsUrl);
 
-        // Configure JWT_TOKEN for the web application if provided
+        // Configure GATEWAY_JWT_TOKEN for the web application if provided
         if (!string.IsNullOrEmpty(JwtToken))
         {
-            Environment.SetEnvironmentVariable("JWT_TOKEN", JwtToken);
+            Environment.SetEnvironmentVariable("GATEWAY_JWT_TOKEN", JwtToken);
         }
 
         // Configure the web application to use the test NATS server
@@ -52,10 +101,10 @@ public abstract class NatsComponentTestBase
                         ["NATS_URL"] = NatsUrl
                     };
 
-                    // Add JWT_TOKEN to configuration if provided
+                    // Add GATEWAY_JWT_TOKEN to configuration if provided
                     if (!string.IsNullOrEmpty(JwtToken))
                     {
-                        configValues["JWT_TOKEN"] = JwtToken;
+                        configValues["GATEWAY_JWT_TOKEN"] = JwtToken;
                     }
 
                     config.AddInMemoryCollection(configValues);
@@ -75,11 +124,11 @@ public abstract class NatsComponentTestBase
     }
 
     /// <summary>
-    /// Creates NatsOpts with JWT authentication if JWT_TOKEN is provided.
+    /// Creates NatsOpts with JWT authentication if GATEWAY_JWT_TOKEN is provided.
     /// </summary>
-    private static NatsOpts CreateNatsOpts()
+    private NatsOpts CreateNatsOpts()
     {
-        var opts = new NatsOpts { Url = ConfiguredNatsUrl };
+        var opts = new NatsOpts { Url = NatsUrl };
 
         if (!string.IsNullOrEmpty(JwtToken))
         {

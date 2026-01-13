@@ -13,7 +13,7 @@
 #
 # Environment Variables:
 #   NATS_URL   - NATS server URL (default: nats://localhost:4222)
-#   JWT_TOKEN  - JWT token for NATS authentication (optional)
+#   GATEWAY_JWT_TOKEN  - JWT token for NATS authentication (optional)
 
 set -e
 
@@ -154,9 +154,9 @@ stage_component_test() {
 
     export NATS_URL="${NATS_URL:-nats://localhost:4222}"
 
-    if [ -n "$JWT_TOKEN" ]; then
+    if [ -n "$GATEWAY_JWT_TOKEN" ]; then
         log_info "Using JWT authentication for NATS"
-        export JWT_TOKEN="$JWT_TOKEN"
+        export GATEWAY_JWT_TOKEN="$GATEWAY_JWT_TOKEN"
     fi
 
     log_info "Running component tests against $NATS_URL..."
@@ -211,7 +211,7 @@ show_help() {
     echo ""
     echo "Environment Variables:"
     echo "  NATS_URL    NATS server URL (default: nats://localhost:4222)"
-    echo "  JWT_TOKEN   JWT token for NATS authentication (optional)"
+    echo "  GATEWAY_JWT_TOKEN   JWT token for NATS authentication (optional)"
     echo ""
     echo "Examples:"
     echo "  $0                                    # Run all stages"
