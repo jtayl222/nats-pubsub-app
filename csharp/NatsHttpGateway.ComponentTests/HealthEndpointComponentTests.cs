@@ -38,7 +38,8 @@ public class HealthEndpointComponentTests : NatsComponentTestBase
         // Assert
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(content, Is.Not.Null);
-        Assert.That(content!.NatsUrl, Does.StartWith("nats://"));
+        Assert.That(content!.NatsUrl, Does.StartWith("nats://").Or.StartWith("tls://"),
+            "NATS URL should use nats:// or tls:// scheme");
         Assert.That(content.NatsUrl, Does.Contain("4222"));
     }
 

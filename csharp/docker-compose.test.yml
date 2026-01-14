@@ -1,0 +1,29 @@
+version: '3.8'
+
+# Docker Compose configuration for running component tests with mTLS
+#
+# Usage:
+#   docker-compose -f docker-compose.test.yml up -d
+#   NATS_URL=tls://localhost:4222 dotnet test NatsHttpGateway.ComponentTests --filter "Category=Component"
+#   docker-compose -f docker-compose.test.yml down
+
+services:
+  nats-tls:
+    image: nats:2.10-alpine
+    container_name: nats-tls-test
+    command: ["-c", "/certs/nats-server.conf"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - ./NatsHttpGateway.ComponentTests/test-certs:/certs:ro
+      - nats-test-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  nats-test-data:

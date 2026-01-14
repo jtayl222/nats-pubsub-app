@@ -99,33 +99,54 @@ security-test:
     expire_in: 1 week
 
 # ------------------------------------------------------------------------------
-# COMPONENT TEST STAGE (requires real NATS JetStream)
+# COMPONENT TEST STAGE (requires real NATS JetStream with mTLS)
 # ------------------------------------------------------------------------------
 component-test:
-  extends: .dotnet-base
   stage: component-test
+  image: mcr.microsoft.com/dotnet/sdk:8.0
   needs:
     - build
     - security-test
   services:
-    - name: nats:latest
-      alias: nats
-      command: ["--jetstream", "-m", "8222"]
+    - name: docker:24-dind
+      alias: docker
   variables:
-    NATS_URL: "nats://nats:4222"
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    NATS_URL: "tls://nats-tls:4222"
+    CERTS_DIR: "${CI_PROJECT_DIR}/NatsHttpGateway.ComponentTests/test-certs"
+  before_script:
+    - dotnet --info
+    # Install Docker CLI
+    - apt-get update && apt-get install -y docker.io curl
   script:
+    # Start NATS with TLS configuration
+    - |
+      echo "Starting NATS with mTLS..."
+      docker run -d --name nats-tls \
+        -p 4222:4222 -p 8222:8222 \
+        -v ${CERTS_DIR}:/certs:ro \
+        nats:latest \
+        -c /certs/nats-server.conf
     # Wait for NATS to be ready
     - |
-      echo "Waiting for NATS JetStream to be ready..."
+      echo "Waiting for NATS JetStream (TLS) to be ready..."
+      NATS_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' nats-tls)
+      echo "NATS container IP: ${NATS_IP}"
       for i in $(seq 1 30); do
-        if curl -s http://nats:8222/healthz > /dev/null 2>&1; then
+        if curl -s http://${NATS_IP}:8222/healthz > /dev/null 2>&1; then
           echo "NATS is ready!"
           break
         fi
         echo "Waiting... ($i/30)"
         sleep 1
       done
-    # Run component tests (excludes Security - those run without NATS)
+    # Set environment variables for tests
+    - export NATS_URL="tls://${NATS_IP}:4222"
+    - export NATS_CA_FILE="${CERTS_DIR}/rootCA.pem"
+    - export NATS_CERT_FILE="${CERTS_DIR}/client.pem"
+    - export NATS_KEY_FILE="${CERTS_DIR}/client.key"
+    # Run component tests
     - dotnet test NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj
         --configuration Release
         --no-build
@@ -133,6 +154,9 @@ component-test:
         --logger "trx;LogFileName=component-test-results.trx"
         --logger "console;verbosity=detailed"
         --results-directory ./results/component
+  after_script:
+    - docker stop nats-tls || true
+    - docker rm nats-tls || true
   artifacts:
     when: always
     paths:
@@ -141,6 +165,11 @@ component-test:
       junit: results/**/*.trx
     expire_in: 1 week
   allow_failure: false
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-dotnet"
+    paths:
+      - .nuget/
+    policy: pull
 
 # ------------------------------------------------------------------------------
 # DOCKER IMAGE PUBLISH STAGE

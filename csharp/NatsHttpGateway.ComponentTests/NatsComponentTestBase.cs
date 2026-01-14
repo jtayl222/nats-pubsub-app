@@ -56,6 +56,17 @@ public abstract class NatsComponentTestBase
             .Build();
     }
 
+    /// <summary>
+    /// Locates the test-certs directory relative to the test assembly.
+    /// </summary>
+    private static string GetTestCertsPath()
+    {
+        // Navigate from bin/Debug/net8.0 up to project root, then into test-certs
+        var assemblyDir = AppContext.BaseDirectory;
+        var projectDir = Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", ".."));
+        return Path.Combine(projectDir, "test-certs");
+    }
+
     private static NatsOptions BuildNatsOptions()
     {
         var options = new NatsOptions();
@@ -64,9 +75,18 @@ public abstract class NatsComponentTestBase
         // Environment variables override
         options.Url = Configuration["NATS_URL"] ?? options.Url;
         options.StreamPrefix = Configuration["STREAM_PREFIX"] ?? options.StreamPrefix;
-        options.CaFile = Configuration["NATS_CA_FILE"] ?? options.CaFile;
-        options.CertFile = Configuration["NATS_CERT_FILE"] ?? options.CertFile;
-        options.KeyFile = Configuration["NATS_KEY_FILE"] ?? options.KeyFile;
+
+        // Certificate paths: env vars > appsettings > test-certs directory
+        var testCertsPath = GetTestCertsPath();
+        options.CaFile = Configuration["NATS_CA_FILE"]
+            ?? options.CaFile
+            ?? Path.Combine(testCertsPath, "rootCA.pem");
+        options.CertFile = Configuration["NATS_CERT_FILE"]
+            ?? options.CertFile
+            ?? Path.Combine(testCertsPath, "client.pem");
+        options.KeyFile = Configuration["NATS_KEY_FILE"]
+            ?? options.KeyFile
+            ?? Path.Combine(testCertsPath, "client.key");
 
         return options;
     }
@@ -97,10 +117,51 @@ public abstract class NatsComponentTestBase
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    /// <summary>
+    /// Validates that mTLS is properly configured for component tests.
+    /// Fails fast if certificates are missing or misconfigured.
+    /// </summary>
+    private static void ValidateMtlsConfiguration()
+    {
+        if (!NatsConfig.IsMtlsEnabled)
+        {
+            throw new InvalidOperationException(
+                "Component tests require mTLS. Ensure certificate files exist in test-certs/ directory " +
+                "or set NATS_CA_FILE, NATS_CERT_FILE, and NATS_KEY_FILE environment variables.");
+        }
+
+        // Validate certificate files exist
+        if (!File.Exists(NatsConfig.CaFile))
+        {
+            throw new FileNotFoundException(
+                $"CA certificate not found: {NatsConfig.CaFile}. " +
+                "Run 'cd test-certs && ./generate-certs.sh' to generate test certificates.");
+        }
+
+        if (!File.Exists(NatsConfig.CertFile))
+        {
+            throw new FileNotFoundException(
+                $"Client certificate not found: {NatsConfig.CertFile}. " +
+                "Run 'cd test-certs && ./generate-certs.sh' to generate test certificates.");
+        }
+
+        if (!File.Exists(NatsConfig.KeyFile))
+        {
+            throw new FileNotFoundException(
+                $"Client key not found: {NatsConfig.KeyFile}. " +
+                "Run 'cd test-certs && ./generate-certs.sh' to generate test certificates.");
+        }
+
+        TestContext.WriteLine($"mTLS configured with certificates from: {Path.GetDirectoryName(NatsConfig.CaFile)}");
+    }
+
     [OneTimeSetUp]
     public async Task GlobalSetup()
     {
         TestContext.WriteLine($"Loading configuration from: {Path.Combine(AppContext.BaseDirectory, "appsettings.json")}");
+
+        // Validate mTLS is configured - component tests require secure connections
+        ValidateMtlsConfiguration();
 
         // CRITICAL: Set environment variables BEFORE creating WebApplicationFactory
         // Program.cs reads these at startup to configure JWT authentication
@@ -108,14 +169,9 @@ public abstract class NatsComponentTestBase
         Environment.SetEnvironmentVariable("JWT_ISSUER", TestJwtIssuer);
         Environment.SetEnvironmentVariable("JWT_AUDIENCE", TestJwtAudience);
         Environment.SetEnvironmentVariable("NATS_URL", NatsConfig.Url);
-
-        if (NatsConfig.IsTlsEnabled)
-            Environment.SetEnvironmentVariable("NATS_CA_FILE", NatsConfig.CaFile);
-        if (NatsConfig.IsMtlsEnabled)
-        {
-            Environment.SetEnvironmentVariable("NATS_CERT_FILE", NatsConfig.CertFile);
-            Environment.SetEnvironmentVariable("NATS_KEY_FILE", NatsConfig.KeyFile);
-        }
+        Environment.SetEnvironmentVariable("NATS_CA_FILE", NatsConfig.CaFile);
+        Environment.SetEnvironmentVariable("NATS_CERT_FILE", NatsConfig.CertFile);
+        Environment.SetEnvironmentVariable("NATS_KEY_FILE", NatsConfig.KeyFile);
 
         // Configure the web application with test settings
         Factory = new WebApplicationFactory<Program>()

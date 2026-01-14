@@ -6,6 +6,7 @@
 - [Testing Levels Explained](#testing-levels-explained)
 - [Execution Flow Comparison](#execution-flow-comparison)
 - [How Component Tests Work](#how-component-tests-work)
+- [Security Configuration](#security-configuration)
 - [Running Component Tests](#running-component-tests)
 - [Adding New Component Tests](#adding-new-component-tests)
   - [Common Pitfalls](#common-pitfalls)
@@ -226,12 +227,55 @@ public async Task PublishMessage_VerifyWithDirectNatsRead()
 
 ---
 
+## Security Configuration
+
+Component tests enforce both security layers: **JWT authentication** for REST API and **mTLS** for NATS connections.
+
+### JWT Authentication (REST API)
+
+JWT is automatically configured by `NatsComponentTestBase`:
+- Generates valid tokens via `GenerateTestToken()`
+- Tokens added to `HttpClient.DefaultRequestHeaders.Authorization`
+- All API calls (except `/health`) require valid JWT
+
+### mTLS (NATS Connection)
+
+Component tests require mutual TLS for NATS connections. Certificates are auto-discovered from the `test-certs/` directory.
+
+**Certificate files:**
+
+| File | Purpose |
+|------|---------|
+| `test-certs/rootCA.pem` | CA certificate (trust anchor) |
+| `test-certs/client.pem` | Client certificate |
+| `test-certs/client.key` | Client private key |
+| `test-certs/server.pem` | NATS server certificate |
+| `test-certs/server.key` | NATS server private key |
+
+**Regenerating certificates:**
+
+```bash
+cd NatsHttpGateway.ComponentTests/test-certs
+./generate-certs.sh
+```
+
+**Environment variable overrides:**
+
+| Variable | Description |
+|----------|-------------|
+| `NATS_URL` | Must use `tls://` scheme (e.g., `tls://localhost:4222`) |
+| `NATS_CA_FILE` | Path to CA certificate |
+| `NATS_CERT_FILE` | Path to client certificate |
+| `NATS_KEY_FILE` | Path to client private key |
+
+---
+
 ## Running Component Tests
 
 ### Prerequisites
 
 - .NET 8.0 SDK
-- Access to NATS JetStream server (local Docker or Linux VM)
+- Docker (for running NATS with TLS)
 - For full CI simulation: GitLab Runner (see [GITLAB_RUNNER_SETUP.md](../NatsHttpGateway/docs/GITLAB_RUNNER_SETUP.md))
 
 ### Using GitLab Runner (Recommended)
@@ -246,52 +290,77 @@ gitlab-runner exec docker security-test
 gitlab-runner exec docker component-test
 ```
 
-### Direct Execution
+### Using Local Test Script (Recommended)
+
+The simplest way to run component tests locally:
 
 ```bash
-# Start NATS with JetStream (if not already running)
-docker run -d --name nats-test -p 4222:4222 -p 8222:8222 nats:latest --jetstream -m 8222
+# Runs NATS with mTLS, executes tests, cleans up
+./scripts/run-component-tests-local.sh
+```
 
-# Set NATS URL (default: localhost:4222)
-export NATS_URL="nats://localhost:4222"  # or nats://<VM-IP>:4222
+### Using Docker Compose
 
-# Run component tests
-dotnet test NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj \
-  --filter "Category=Component"
+```bash
+# Start NATS with TLS
+docker-compose -f docker-compose.test.yml up -d
 
-# Cleanup when done
-docker rm -f nats-test
+# Run tests (certificates auto-discovered from test-certs/)
+dotnet test NatsHttpGateway.ComponentTests --filter "Category=Component"
+
+# Cleanup
+docker-compose -f docker-compose.test.yml down
+```
+
+### Manual Execution
+
+```bash
+# Start NATS with mTLS
+docker run -d --name nats-tls \
+  -p 4222:4222 -p 8222:8222 \
+  -v $(pwd)/NatsHttpGateway.ComponentTests/test-certs:/certs:ro \
+  nats:latest -c /certs/nats-server.conf
+
+# Set environment variables
+export NATS_URL="tls://localhost:4222"
+export NATS_CA_FILE="$(pwd)/NatsHttpGateway.ComponentTests/test-certs/rootCA.pem"
+export NATS_CERT_FILE="$(pwd)/NatsHttpGateway.ComponentTests/test-certs/client.pem"
+export NATS_KEY_FILE="$(pwd)/NatsHttpGateway.ComponentTests/test-certs/client.key"
+
+# Run tests
+dotnet test NatsHttpGateway.ComponentTests --filter "Category=Component"
+
+# Cleanup
+docker rm -f nats-tls
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-$env:NATS_URL = "nats://192.168.56.101:4222"
-dotnet test NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj `
-  --filter "Category=Component"
-```
+# Start NATS with TLS
+docker run -d --name nats-tls `
+  -p 4222:4222 -p 8222:8222 `
+  -v ${PWD}/NatsHttpGateway.ComponentTests/test-certs:/certs:ro `
+  nats:latest -c /certs/nats-server.conf
 
-### With JWT API Authentication
-
-The gateway supports optional JWT Bearer token authentication for REST API endpoints. To run component tests with JWT enabled:
-
-```bash
-# Set JWT configuration (enables authentication)
-export JWT_KEY="your-secret-key-minimum-32-characters"
-export JWT_ISSUER="your-issuer"
-export JWT_AUDIENCE="nats-gateway"
-
-# Provide a pre-generated API token for test requests
-export API_TOKEN="eyJhbGciOiJIUzI1NiIs..."
+# Set environment variables
+$env:NATS_URL = "tls://localhost:4222"
+$env:NATS_CA_FILE = "${PWD}/NatsHttpGateway.ComponentTests/test-certs/rootCA.pem"
+$env:NATS_CERT_FILE = "${PWD}/NatsHttpGateway.ComponentTests/test-certs/client.pem"
+$env:NATS_KEY_FILE = "${PWD}/NatsHttpGateway.ComponentTests/test-certs/client.key"
 
 # Run tests
-dotnet test --filter "Category=Component"
+dotnet test NatsHttpGateway.ComponentTests --filter "Category=Component"
+
+# Cleanup
+docker rm -f nats-tls
 ```
 
-#### Running Security-Specific Tests
+### Security Tests
+
+Security tests verify JWT authentication in isolation (no NATS required):
 
 ```bash
-# Run security tests only (tests JWT authentication scenarios)
 dotnet test --filter "Category=Security"
 ```
 
@@ -301,21 +370,7 @@ Security tests cover:
 - Health endpoint allows anonymous access
 - Valid tokens grant access to protected endpoints
 
-> **Note:** Security tests use a mock NatsService to isolate JWT authentication testing from NATS connectivity. See `SecurityComponentTests.cs` for implementation details.
-
-### With NATS mTLS
-
-For testing with NATS mTLS (client certificates):
-
-```bash
-export NATS_URL="nats://localhost:4222"
-export NATS_CA_FILE="/path/to/rootCA.pem"
-export NATS_CERT_FILE="/path/to/client.crt"
-export NATS_KEY_FILE="/path/to/client.key"
-dotnet test --filter "Category=Component"
-```
-
-> See [../NatsHttpGateway/SECURITY.md](../NatsHttpGateway/SECURITY.md) for complete security configuration guide including certificate generation.
+> **Note:** Security tests use a mock NatsService. See `SecurityComponentTests.cs` for implementation.
 
 ---
 
