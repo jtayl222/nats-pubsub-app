@@ -7,11 +7,15 @@
 - [Execution Flow Comparison](#execution-flow-comparison)
 - [How Component Tests Work](#how-component-tests-work)
 - [Security Configuration](#security-configuration)
+- [Development Environment Setup](#development-environment-setup)
+  - [The Death of gitlab-runner exec](#the-death-of-gitlab-runner-exec)
 - [Running Component Tests](#running-component-tests)
 - [Adding New Component Tests](#adding-new-component-tests)
   - [Common Pitfalls](#common-pitfalls)
   - [Test Priority Matrix](#test-priority-matrix)
 - [Code Coverage Strategy](#code-coverage-strategy)
+- [Project Structure](#project-structure)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -280,25 +284,143 @@ This means component tests **cannot accidentally connect to production NATS**, e
 
 ---
 
+## Development Environment Setup
+
+This section covers setting up a local development environment for running CI jobs and component tests.
+
+### The Death of `gitlab-runner exec`
+
+The `gitlab-runner exec` command was removed in GitLab Runner 17.0 (April 2024).
+
+**Why it was removed:** The command had been unmaintained for years and didn't support many newer `.gitlab-ci.yml` features like `rules:`, `include:`, `needs:`, and other modern CI/CD constructs. Rather than invest engineering effort to bring it to feature parity, GitLab chose to deprecate it in 15.7 and remove it entirely in 17.0.
+
+**Community response:** The [feedback issue](https://gitlab.com/gitlab-org/gitlab/-/issues/384107) received significant pushback from developers who relied on local pipeline testing. GitLab's suggested alternative—"use the pipeline editor in the web UI"—only validates syntax and doesn't actually run jobs, which missed the point entirely. GitLab's official stance remains that there are [no plans to implement local pipeline execution](https://gitlab.com/gitlab-org/gitlab-runner/-/issues/2797).
+
+**The community solution:** [gitlab-ci-local](https://github.com/firecow/gitlab-ci-local) emerged as the de facto replacement. It's a community-maintained tool that parses `.gitlab-ci.yml` and runs jobs in Docker containers, supporting most modern GitLab CI features. Install via npm:
+
+```bash
+npm install -g gitlab-ci-local
+```
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Development Setup                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────────────┐      ┌──────────────────────────────┐ │
+│  │   Windows 11 Host    │      │      Linux VM (VirtualBox)   │ │
+│  │                      │      │                              │ │
+│  │  - .NET 8.0 SDK      │ SSH  │  - Docker                    │ │
+│  │  - Git               │─────▶│  - gitlab-ci-local           │ │
+│  │  - VS Code / Rider   │      │  - NATS JetStream            │ │
+│  │                      │      │                              │ │
+│  └──────────────────────┘      └──────────────────────────────┘ │
+│           │                              │                       │
+│           │         NATS Protocol        │                       │
+│           └──────────────────────────────┘                       │
+│                    192.168.56.x                                  │
+│                  (Host-Only Network)                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Linux VM Setup
+
+#### 1. Install Docker
+
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install -y docker.io
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo usermod -aG docker $USER
+
+# RHEL/Rocky/Fedora
+sudo dnf install -y docker
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo usermod -aG docker $USER
+```
+
+> **Note:** Log out and back in for the group change to take effect.
+
+#### 2. Install gitlab-ci-local
+
+```bash
+# Requires Node.js (v16+)
+npm install -g gitlab-ci-local
+
+# Or using npx (no install needed)
+npx gitlab-ci-local --version
+
+# Verify installation
+gitlab-ci-local --version
+```
+
+#### 3. Start NATS JetStream with mTLS
+
+```bash
+# Uses port 4223/8223 to avoid conflicts with production NATS on 4222/8222
+CERTS_DIR="$(pwd)/NatsHttpGateway.ComponentTests/test-certs"
+
+docker run -d \
+  --name nats-dev \
+  --restart unless-stopped \
+  -p 4223:4222 \
+  -p 8223:8222 \
+  -v "${CERTS_DIR}:/certs:ro" \
+  nats:latest \
+  -c /certs/nats-server.conf
+
+# Verify NATS is running
+curl http://localhost:8223/healthz
+```
+
+#### 4. Configure VirtualBox Networking (Optional)
+
+For Windows host to reach the Linux VM:
+
+1. In VirtualBox: **File > Host Network Manager**
+2. Create a host-only network (e.g., `vboxnet0` with `192.168.56.1/24`)
+3. In VM settings: **Network > Adapter 2 > Host-only Adapter**
+4. Inside VM, verify IP: `ip addr show` (should show `192.168.56.x`)
+
+---
+
 ## Running Component Tests
 
 ### Prerequisites
 
 - .NET 8.0 SDK
 - Docker (for running NATS with TLS)
-- For full CI simulation: GitLab Runner (see [GITLAB_RUNNER_SETUP.md](../NatsHttpGateway/docs/GITLAB_RUNNER_SETUP.md))
+- For CI simulation: [gitlab-ci-local](https://github.com/firecow/gitlab-ci-local) (`npm install -g gitlab-ci-local`)
 
-### Using GitLab Runner (Recommended)
+### Using gitlab-ci-local
 
-Uses `.gitlab-ci.yml` as single source of truth:
+Runs CI jobs locally using `.gitlab-ci.yml` as single source of truth:
 
 ```bash
 # Run specific CI jobs locally
-gitlab-runner exec docker build
-gitlab-runner exec docker unit-test
-gitlab-runner exec docker security-test
-gitlab-runner exec docker component-test
+gitlab-ci-local build
+gitlab-ci-local unit-test
+gitlab-ci-local security-test
+gitlab-ci-local component-test
+
+# Run all jobs
+gitlab-ci-local
 ```
+
+**CI Job Reference:**
+
+| Job | Stage | NATS Required | Description |
+|-----|-------|:-------------:|-------------|
+| `build` | build | No | Restore and build solution |
+| `unit-test` | test | No | Unit tests (excludes Security & Component) |
+| `security-test` | security-test | No | Security tests (JWT, auth attributes) |
+| `component-test` | component-test | Yes | Integration tests with real NATS |
+| `publish-image` | publish | No | Build and push Docker image |
 
 ### Using Local Test Script (Recommended)
 
@@ -494,5 +616,77 @@ NatsHttpGateway.ComponentTests/
 ├── NatsHttpGateway.ComponentTests.csproj
 ├── NatsComponentTestBase.cs
 ├── HealthEndpointComponentTests.cs
-└── MessagesEndpointComponentTests.cs
+├── MessagesEndpointComponentTests.cs
+└── test-certs/
+    ├── rootCA.pem
+    ├── client.pem
+    ├── client.key
+    ├── server.pem
+    ├── server.key
+    ├── nats-server.conf
+    └── generate-certs.sh
+```
+
+---
+
+## Troubleshooting
+
+### NATS Connection Refused
+
+```bash
+# Check NATS is running
+docker ps | grep nats
+curl http://localhost:8223/healthz
+
+# Check firewall on Linux VM (Ubuntu/Debian)
+sudo ufw status
+sudo ufw allow 4223/tcp
+sudo ufw allow 8223/tcp
+
+# Check firewall on Linux VM (RHEL/Rocky/Fedora)
+sudo firewall-cmd --list-ports
+sudo firewall-cmd --permanent --add-port=4223/tcp
+sudo firewall-cmd --permanent --add-port=8223/tcp
+sudo firewall-cmd --reload
+```
+
+### gitlab-ci-local Fails
+
+```bash
+# Ensure Docker is accessible
+docker ps
+
+# Check gitlab-ci-local version
+gitlab-ci-local --version
+
+# Run with verbose output
+gitlab-ci-local --verbose build
+
+# List available jobs
+gitlab-ci-local --list
+```
+
+### Windows Cannot Reach VM
+
+```powershell
+# Test connectivity
+ping 192.168.56.101
+Test-NetConnection -ComputerName 192.168.56.101 -Port 4223
+
+# Check VirtualBox host-only adapter is enabled
+ipconfig | Select-String "192.168.56"
+```
+
+### Certificate Errors
+
+```bash
+# Regenerate test certificates
+cd NatsHttpGateway.ComponentTests/test-certs
+./generate-certs.sh
+
+# Verify certificate files exist
+ls -la *.pem *.key
+
+# Check certificate expiration
+openssl x509 -in rootCA.pem -noout -dates
 ```

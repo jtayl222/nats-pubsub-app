@@ -5,7 +5,7 @@ version: '3.8'
 # Uses ports 4223/8223 to avoid conflicts with production NATS on 4222/8222
 #
 # Usage:
-#   docker-compose -f docker-compose.test.yml up -d
+#   docker compose -f docker-compose.test.yml up -d
 #   NATS_URL=tls://localhost:4223 dotnet test NatsHttpGateway.ComponentTests --filter "Category=Component"
 #   docker-compose -f docker-compose.test.yml down
 
