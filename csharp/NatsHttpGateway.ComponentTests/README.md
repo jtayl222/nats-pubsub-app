@@ -325,14 +325,14 @@ docker-compose -f docker-compose.test.yml down
 ### Manual Execution
 
 ```bash
-# Start NATS with mTLS
+# Start NATS with mTLS (uses port 4223 to avoid conflicts with production NATS)
 docker run -d --name nats-tls \
-  -p 4222:4222 -p 8222:8222 \
+  -p 4223:4222 -p 8223:8222 \
   -v $(pwd)/NatsHttpGateway.ComponentTests/test-certs:/certs:ro \
   nats:latest -c /certs/nats-server.conf
 
 # Set environment variables
-export NATS_URL="tls://localhost:4222"
+export NATS_URL="tls://localhost:4223"
 export NATS_CA_FILE="$(pwd)/NatsHttpGateway.ComponentTests/test-certs/rootCA.pem"
 export NATS_CERT_FILE="$(pwd)/NatsHttpGateway.ComponentTests/test-certs/client.pem"
 export NATS_KEY_FILE="$(pwd)/NatsHttpGateway.ComponentTests/test-certs/client.key"
@@ -347,14 +347,14 @@ docker rm -f nats-tls
 ### Windows (PowerShell)
 
 ```powershell
-# Start NATS with TLS
+# Start NATS with TLS (uses port 4223 to avoid conflicts with production NATS)
 docker run -d --name nats-tls `
-  -p 4222:4222 -p 8222:8222 `
+  -p 4223:4222 -p 8223:8222 `
   -v ${PWD}/NatsHttpGateway.ComponentTests/test-certs:/certs:ro `
   nats:latest -c /certs/nats-server.conf
 
 # Set environment variables
-$env:NATS_URL = "tls://localhost:4222"
+$env:NATS_URL = "tls://localhost:4223"
 $env:NATS_CA_FILE = "${PWD}/NatsHttpGateway.ComponentTests/test-certs/rootCA.pem"
 $env:NATS_CERT_FILE = "${PWD}/NatsHttpGateway.ComponentTests/test-certs/client.pem"
 $env:NATS_KEY_FILE = "${PWD}/NatsHttpGateway.ComponentTests/test-certs/client.key"

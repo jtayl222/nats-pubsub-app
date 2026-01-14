@@ -33,8 +33,9 @@ If certificates expire or need regeneration:
 ### Local Development
 
 ```bash
+# Uses port 4223 to avoid conflicts with production NATS on 4222
 docker run -d --name nats-tls \
-  -p 4222:4222 -p 8222:8222 \
+  -p 4223:4222 -p 8223:8222 \
   -v $(pwd):/certs:ro \
   nats:latest -c /certs/nats-server.conf
 ```
@@ -42,7 +43,7 @@ docker run -d --name nats-tls \
 ### Environment Variables
 
 ```bash
-export NATS_URL="tls://localhost:4222"
+export NATS_URL="tls://localhost:4223"
 export NATS_CA_FILE="$(pwd)/rootCA.pem"
 export NATS_CERT_FILE="$(pwd)/client.pem"
 export NATS_KEY_FILE="$(pwd)/client.key"
