@@ -95,8 +95,8 @@ results/
 # Note: *.pfx already listed above
 
 # Test certificates directory
-test-certs/
-**/test-certs/
+# Note: *.pem and *.key rules above handle cert files
+# Scripts and docs (generate-certs.sh, nats-server.conf, README.md) are tracked
 
 # Credential and secret files
 credentials.json

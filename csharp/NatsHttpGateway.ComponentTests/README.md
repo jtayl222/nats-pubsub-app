@@ -268,6 +268,16 @@ cd NatsHttpGateway.ComponentTests/test-certs
 | `NATS_CERT_FILE` | Path to client certificate |
 | `NATS_KEY_FILE` | Path to client private key |
 
+### Test Certificate Isolation
+
+The test certificates in `test-certs/` use a **completely separate Certificate Authority** from production. This provides inherent isolation:
+
+- Test client certs are signed by the test CA, not the production CA
+- Production NATS will reject test client certificates (unknown CA)
+- Test clients validate against the test CA, rejecting production server certs
+
+This means component tests **cannot accidentally connect to production NATS**, even if both are running on the same machine on the same port. The TLS handshake will fail in both directions due to CA mismatch.
+
 ---
 
 ## Running Component Tests
