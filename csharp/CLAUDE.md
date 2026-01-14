@@ -100,16 +100,17 @@ Requires access to a NATS JetStream server. Uses GitLab CI services for pipeline
 **Verification Strategy:** Tests publish via HTTP API, then verify by reading directly from NATS using the C# NATS.Client library.
 
 ```bash
-# Using gitlab-runner (recommended - matches CI environment exactly)
-gitlab-runner exec docker component-test
+# Using gitlab-ci-local (recommended - simulates CI environment locally)
+# Install: npm install -g gitlab-ci-local
+gitlab-ci-local component-test
 
-# Run specific stages
-gitlab-runner exec docker build
-gitlab-runner exec docker unit-test
-gitlab-runner exec docker security-test
+# Run specific jobs
+gitlab-ci-local build
+gitlab-ci-local unit-test
+gitlab-ci-local security-test
 
-# Direct execution (requires NATS running)
-NATS_URL=nats://localhost:4222 dotnet test NatsHttpGateway.ComponentTests
+# Direct execution (requires NATS running on port 4223)
+NATS_URL=tls://localhost:4223 dotnet test NatsHttpGateway.ComponentTests
 ```
 
 **Environment Variables:**
