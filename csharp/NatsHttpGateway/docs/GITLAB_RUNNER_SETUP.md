@@ -36,16 +36,26 @@ sudo apt-get install -y docker.io
 sudo systemctl enable docker
 sudo systemctl start docker
 sudo usermod -aG docker $USER
+
+# RHEL/Rocky/Fedora
+sudo dnf install -y docker
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo usermod -aG docker $USER
 ```
+
+> **Note:** Log out and back in for the group change to take effect.
 
 ### 2. Install GitLab Runner
 
 ```bash
-# Add GitLab repository
+# Ubuntu/Debian
 curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | sudo bash
-
-# Install
 sudo apt-get install -y gitlab-runner
+
+# RHEL/Rocky/Fedora
+curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.rpm.sh" | sudo bash
+sudo dnf install -y gitlab-runner
 
 # Verify installation
 gitlab-runner --version
@@ -163,10 +173,16 @@ Get the registration token from: **GitLab Project > Settings > CI/CD > Runners**
 docker ps | grep nats
 curl http://192.168.56.101:8222/healthz
 
-# Check firewall on Linux VM
+# Check firewall on Linux VM (Ubuntu/Debian)
 sudo ufw status
 sudo ufw allow 4222/tcp
 sudo ufw allow 8222/tcp
+
+# Check firewall on Linux VM (RHEL/Rocky/Fedora)
+sudo firewall-cmd --list-ports
+sudo firewall-cmd --permanent --add-port=4222/tcp
+sudo firewall-cmd --permanent --add-port=8222/tcp
+sudo firewall-cmd --reload
 ```
 
 ### gitlab-runner exec Fails

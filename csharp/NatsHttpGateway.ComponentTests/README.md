@@ -8,6 +8,8 @@
 - [How Component Tests Work](#how-component-tests-work)
 - [Running Component Tests](#running-component-tests)
 - [Adding New Component Tests](#adding-new-component-tests)
+  - [Common Pitfalls](#common-pitfalls)
+  - [Test Priority Matrix](#test-priority-matrix)
 - [Code Coverage Strategy](#code-coverage-strategy)
 
 ---
@@ -157,9 +159,9 @@ flowchart LR
 
 ## How Component Tests Work
 
-### Verification Strategy: Triangulation with nats-box
+### Verification Strategy
 
-Component tests use **two independent verification paths** to catch deserialization inconsistencies:
+Component tests verify messages by reading directly from NATS using the C# NATS.Client library:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -173,36 +175,24 @@ Component tests use **two independent verification paths** to catch deserializat
 │  └──────────────┘        HTTP 200         └──────────────────┘     │
 │         │                                          │                │
 │         │                                          │                │
-│    ┌────┴────┐                                     │                │
-│    │         │                                     │                │
-│    ▼         ▼                                     ▼                │
-│ ┌──────┐  ┌─────────┐                    ┌─────────────────┐       │
-│ │Direct│  │nats-box │                    │   NatsService   │       │
-│ │ NATS │  │ (Docker)│                    │                 │       │
-│ │Client│  │         │                    └─────────────────┘       │
-│ └──────┘  └─────────┘                             │                │
-│    │           │                                  │                │
-│    │           │                                  │                │
-│    ▼           ▼                                  ▼                │
+│         ▼                                          ▼                │
+│    ┌──────────┐                          ┌─────────────────┐       │
+│    │  Direct  │                          │   NatsService   │       │
+│    │   NATS   │                          │                 │       │
+│    │  Client  │                          └─────────────────┘       │
+│    └──────────┘                                   │                │
+│         │                                         │                │
+│         │                                         │                │
+│         ▼                                         ▼                │
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │                      NATS JetStream                          │   │
 │  │              (Local Docker or Linux VM)                      │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                      │
-│  Verification 1: Direct NATS client reads message                   │
-│  Verification 2: nats-box CLI reads message (independent parser)    │
+│  Verification: Direct NATS client reads and validates message       │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
-
-### Why Two Verification Paths?
-
-We have observed cases where our NATS client deserialization and nats-box deserialization produce different results. By verifying with **both**:
-
-1. **Direct NATS connection** (C# NATS.Client library)
-2. **nats-box CLI** (Go-based official NATS tooling)
-
-...we catch serialization format issues that a single verification path would miss.
 
 ### Key Components
 
@@ -212,7 +202,8 @@ Provides:
 - **WebApplicationFactory**: In-memory test server hosting the full application
 - **HttpClient**: For making API requests
 - **NatsConnection + JetStream**: Direct NATS connection for verification
-- **Test Isolation**: Unique stream names per test
+- **Test Isolation**: Unique stream names per test (`TEST_{guid}`)
+- **WaitForAsync Helper**: Retries assertions until condition passes or times out (useful for eventual consistency)
 
 #### Test Pattern Example
 
@@ -226,14 +217,10 @@ public async Task PublishMessage_VerifyWithDirectNatsRead()
     // 2. Act: Publish via the HTTP API
     var response = await Client.PostAsJsonAsync($"/api/messages/{subject}", request);
 
-    // 3. Verify Path 1: Read directly from NATS
+    // 3. Verify: Read directly from NATS
     var consumer = await JetStream.CreateOrUpdateConsumerAsync(...);
     var msg = await consumer.NextAsync<byte[]>();
     Assert.That(msg.HasValue, Is.True);
-
-    // 4. Verify Path 2: Read via nats-box (in separate test)
-    var natsBoxOutput = await RunNatsBoxCommandAsync($"stream get {TestStreamName}");
-    Assert.That(natsBoxOutput, Does.Contain(expectedValue));
 }
 ```
 
@@ -262,12 +249,18 @@ gitlab-runner exec docker component-test
 ### Direct Execution
 
 ```bash
+# Start NATS with JetStream (if not already running)
+docker run -d --name nats-test -p 4222:4222 -p 8222:8222 nats:latest --jetstream -m 8222
+
 # Set NATS URL (default: localhost:4222)
 export NATS_URL="nats://localhost:4222"  # or nats://<VM-IP>:4222
 
 # Run component tests
 dotnet test NatsHttpGateway.ComponentTests/NatsHttpGateway.ComponentTests.csproj \
   --filter "Category=Component"
+
+# Cleanup when done
+docker rm -f nats-test
 ```
 
 ### Windows (PowerShell)
@@ -324,12 +317,6 @@ dotnet test --filter "Category=Component"
 
 > See [../NatsHttpGateway/SECURITY.md](../NatsHttpGateway/SECURITY.md) for complete security configuration guide including certificate generation.
 
-### nats-box Verification Tests
-
-The nats-box tests require Docker to be available (either locally or the tests will be skipped). These tests run `docker run natsio/nats-box` to verify messages using the official NATS CLI tooling.
-
-If Docker is not available locally but nats-box is accessible on your VM, the direct NATS verification tests will still run and provide coverage.
-
 ---
 
 ## Adding New Component Tests
@@ -370,8 +357,29 @@ public class NewFeatureComponentTests : NatsComponentTestBase
 ### Best Practices
 
 1. **Isolate tests**: Use `TestStreamName` (auto-generated unique per test)
-2. **Use triangulation**: Verify via API AND direct NATS connection
+2. **Verify with direct NATS**: Read messages directly from NATS to confirm they were stored correctly
 3. **Test both directions**: API→NATS and NATS→API
+
+### Common Pitfalls
+
+| Pitfall | Why It Matters | Solution |
+|---------|---------------|----------|
+| Hardcoded stream names | Tests conflict when run in parallel | Use `TestStreamName` (unique per test) |
+| Not cleaning up streams | Artifacts affect subsequent runs | Base class handles cleanup in `TearDown` |
+| Assuming immediate consistency | JetStream may have slight delays | Use `WaitForAsync()` helper for retrying assertions |
+| Testing only one direction | Misses issues in publish or consume path | Test API→NATS and NATS→API |
+
+### Test Priority Matrix
+
+| Test Area | Endpoints | Priority | Rationale |
+|-----------|-----------|----------|-----------|
+| Message round-trip | `POST/GET /api/messages/*` | Critical | Core functionality |
+| Consumer acknowledgment | `/api/consumers/{stream}/{consumer}/*` | Critical | Data loss prevention |
+| Consumer reset | `POST /api/consumers/{stream}/{consumer}/reset` | Critical | Recovery operations |
+| Stream operations | `/api/streams/*` | High | Foundation for other features |
+| Protobuf messages | `/api/proto/protobufmessages/*` | High | Binary protocol correctness |
+| Health endpoint | `GET /health` | Medium | Orchestration/monitoring accuracy |
+| WebSocket streaming | `/ws/websocketmessages/*` | Medium | Real-time features |
 
 ---
 
