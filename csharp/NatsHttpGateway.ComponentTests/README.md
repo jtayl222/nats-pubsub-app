@@ -362,20 +362,20 @@ gitlab-ci-local --version
 #### 3. Start NATS JetStream with mTLS
 
 ```bash
-# Uses port 4223/8223 to avoid conflicts with production NATS on 4222/8222
+# Uses port 4333/8333 to avoid conflicts with production NATS on 4222/8222
 CERTS_DIR="$(pwd)/NatsHttpGateway.ComponentTests/test-certs"
 
 docker run -d \
   --name nats-dev \
   --restart unless-stopped \
-  -p 4223:4222 \
-  -p 8223:8222 \
+  -p 4333:4222 \
+  -p 8333:8222 \
   -v "${CERTS_DIR}:/certs:ro" \
   nats:latest \
   -c /certs/nats-server.conf
 
 # Verify NATS is running
-curl http://localhost:8223/healthz
+curl http://localhost:8333/healthz
 ```
 
 #### 4. Configure VirtualBox Networking (Optional)
@@ -434,27 +434,29 @@ The simplest way to run component tests locally:
 ### Using Docker Compose
 
 ```bash
+cd NatsHttpGateway.ComponentTests
+
 # Start NATS with TLS
-docker-compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d
 
 # Run tests (certificates auto-discovered from test-certs/)
-dotnet test NatsHttpGateway.ComponentTests --filter "Category=Component"
+dotnet test . --filter "Category=Component"
 
 # Cleanup
-docker-compose -f docker-compose.test.yml down
+docker compose -f docker-compose.test.yml down
 ```
 
 ### Manual Execution
 
 ```bash
-# Start NATS with mTLS (uses port 4223 to avoid conflicts with production NATS)
+# Start NATS with mTLS (uses port 4333 to avoid conflicts with production NATS)
 docker run -d --name nats-tls \
-  -p 4223:4222 -p 8223:8222 \
+  -p 4333:4222 -p 8333:8222 \
   -v $(pwd)/NatsHttpGateway.ComponentTests/test-certs:/certs:ro \
   nats:latest -c /certs/nats-server.conf
 
 # Set environment variables
-export NATS_URL="tls://localhost:4223"
+export NATS_URL="tls://localhost:4333"
 export NATS_CA_FILE="$(pwd)/NatsHttpGateway.ComponentTests/test-certs/rootCA.pem"
 export NATS_CERT_FILE="$(pwd)/NatsHttpGateway.ComponentTests/test-certs/client.pem"
 export NATS_KEY_FILE="$(pwd)/NatsHttpGateway.ComponentTests/test-certs/client.key"
@@ -469,14 +471,14 @@ docker rm -f nats-tls
 ### Windows (PowerShell)
 
 ```powershell
-# Start NATS with TLS (uses port 4223 to avoid conflicts with production NATS)
+# Start NATS with TLS (uses port 4333 to avoid conflicts with production NATS)
 docker run -d --name nats-tls `
-  -p 4223:4222 -p 8223:8222 `
+  -p 4333:4222 -p 8333:8222 `
   -v ${PWD}/NatsHttpGateway.ComponentTests/test-certs:/certs:ro `
   nats:latest -c /certs/nats-server.conf
 
 # Set environment variables
-$env:NATS_URL = "tls://localhost:4223"
+$env:NATS_URL = "tls://localhost:4333"
 $env:NATS_CA_FILE = "${PWD}/NatsHttpGateway.ComponentTests/test-certs/rootCA.pem"
 $env:NATS_CERT_FILE = "${PWD}/NatsHttpGateway.ComponentTests/test-certs/client.pem"
 $env:NATS_KEY_FILE = "${PWD}/NatsHttpGateway.ComponentTests/test-certs/client.key"
@@ -636,17 +638,17 @@ NatsHttpGateway.ComponentTests/
 ```bash
 # Check NATS is running
 docker ps | grep nats
-curl http://localhost:8223/healthz
+curl http://localhost:8333/healthz
 
 # Check firewall on Linux VM (Ubuntu/Debian)
 sudo ufw status
-sudo ufw allow 4223/tcp
-sudo ufw allow 8223/tcp
+sudo ufw allow 4333/tcp
+sudo ufw allow 8333/tcp
 
 # Check firewall on Linux VM (RHEL/Rocky/Fedora)
 sudo firewall-cmd --list-ports
-sudo firewall-cmd --permanent --add-port=4223/tcp
-sudo firewall-cmd --permanent --add-port=8223/tcp
+sudo firewall-cmd --permanent --add-port=4333/tcp
+sudo firewall-cmd --permanent --add-port=8333/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -671,7 +673,7 @@ gitlab-ci-local --list
 ```powershell
 # Test connectivity
 ping 192.168.56.101
-Test-NetConnection -ComputerName 192.168.56.101 -Port 4223
+Test-NetConnection -ComputerName 192.168.56.101 -Port 4333
 
 # Check VirtualBox host-only adapter is enabled
 ipconfig | Select-String "192.168.56"

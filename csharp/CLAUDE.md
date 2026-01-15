@@ -109,8 +109,8 @@ gitlab-ci-local build
 gitlab-ci-local unit-test
 gitlab-ci-local security-test
 
-# Direct execution (requires NATS running on port 4223)
-NATS_URL=tls://localhost:4223 dotnet test NatsHttpGateway.ComponentTests
+# Direct execution (requires NATS running on port 4333)
+NATS_URL=tls://localhost:4333 dotnet test NatsHttpGateway.ComponentTests
 ```
 
 **Environment Variables:**

@@ -133,7 +133,7 @@ public class NatsServiceTlsTests
     public void Constructor_ReadsNatsUrlFromOptions()
     {
         // Arrange
-        var expectedUrl = "nats://custom-host:4223";
+        var expectedUrl = "nats://custom-host:4333";
         var options = CreateOptions(new NatsOptions
         {
             Url = expectedUrl

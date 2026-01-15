@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run component tests locally with mTLS-enabled NATS
 # This script handles certificate generation, NATS startup, and cleanup
-# Uses ports 4223/8223 to avoid conflicts with production NATS on 4222/8222
+# Uses ports 4333/8333 to avoid conflicts with production NATS on 4222/8222
 
 set -e
 
@@ -36,7 +36,7 @@ docker rm $CONTAINER_NAME 2>/dev/null || true
 # Start NATS with TLS
 echo "Starting NATS with mTLS..."
 docker run -d --name $CONTAINER_NAME \
-    -p 4223:4222 -p 8223:8222 \
+    -p 4333:4222 -p 8333:8222 \
     -v "$CERTS_DIR:/certs:ro" \
     nats:latest \
     -c /certs/nats-server.conf
@@ -44,7 +44,7 @@ docker run -d --name $CONTAINER_NAME \
 # Wait for NATS to be ready
 echo "Waiting for NATS to be ready..."
 for i in {1..30}; do
-    if curl -s http://localhost:8223/healthz > /dev/null 2>&1; then
+    if curl -s http://localhost:8333/healthz > /dev/null 2>&1; then
         echo "NATS is ready!"
         break
     fi
@@ -61,7 +61,7 @@ echo "Running component tests..."
 echo ""
 
 # Set environment variables
-export NATS_URL="tls://localhost:4223"
+export NATS_URL="tls://localhost:4333"
 export NATS_CA_FILE="$CERTS_DIR/rootCA.pem"
 export NATS_CERT_FILE="$CERTS_DIR/client.pem"
 export NATS_KEY_FILE="$CERTS_DIR/client.key"

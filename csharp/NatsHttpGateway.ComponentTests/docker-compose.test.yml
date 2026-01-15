@@ -1,13 +1,12 @@
-version: '3.8'
-
 # Docker Compose configuration for running component tests with mTLS
 #
-# Uses ports 4223/8223 to avoid conflicts with production NATS on 4222/8222
+# Uses ports 4333/8333 to avoid conflicts with production NATS on 4222/8222
 #
 # Usage:
+#   cd NatsHttpGateway.ComponentTests
 #   docker compose -f docker-compose.test.yml up -d
-#   NATS_URL=tls://localhost:4223 dotnet test NatsHttpGateway.ComponentTests --filter "Category=Component"
-#   docker-compose -f docker-compose.test.yml down
+#   NATS_URL=tls://localhost:4333 dotnet test . --filter "Category=Component"
+#   docker compose -f docker-compose.test.yml down
 
 services:
   nats-tls:
@@ -15,10 +14,10 @@ services:
     container_name: nats-tls-test
     command: ["-c", "/certs/nats-server.conf"]
     ports:
-      - "4223:4222"
-      - "8223:8222"
+      - "4333:4222"
+      - "8333:8222"
     volumes:
-      - ./NatsHttpGateway.ComponentTests/test-certs:/certs:ro
+      - ./test-certs:/certs:ro,z
       - nats-test-data:/data
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]

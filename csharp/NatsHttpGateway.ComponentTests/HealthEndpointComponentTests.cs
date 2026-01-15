@@ -40,8 +40,8 @@ public class HealthEndpointComponentTests : NatsComponentTestBase
         Assert.That(content, Is.Not.Null);
         Assert.That(content!.NatsUrl, Does.StartWith("nats://").Or.StartWith("tls://"),
             "NATS URL should use nats:// or tls:// scheme");
-        Assert.That(content.NatsUrl, Does.Contain("422"),
-            "NATS URL should contain port 4222 (CI) or 4223 (local)");
+        Assert.That(content.NatsUrl, Does.Contain("4222").Or.Contain("4333"),
+            "NATS URL should contain port 4222 (CI) or 4333 (local)");
     }
 
     [Test]
